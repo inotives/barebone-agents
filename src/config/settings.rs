@@ -19,6 +19,7 @@ pub struct Settings {
     pub skills_min_match_hits: u32,
     pub heartbeat_interval: u32,
     pub platform_name: String,
+    pub delegation_enabled: bool,
     /// All key-value pairs from root .env (for API keys, etc.)
     pub env: HashMap<String, String>,
 }
@@ -49,6 +50,7 @@ impl Settings {
             skills_min_match_hits: env_or_parse(&env, "SKILLS_MIN_MATCH_HITS", 2),
             heartbeat_interval: env_or_parse(&env, "HEARTBEAT_INTERVAL", 60),
             platform_name: env_or(&env, "PLATFORM_NAME", "barebone-agent"),
+            delegation_enabled: env_or_parse(&env, "DELEGATION_ENABLED", false),
             env,
         }
     }

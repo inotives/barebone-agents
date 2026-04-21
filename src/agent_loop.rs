@@ -6,6 +6,7 @@ use tracing::{debug, info, warn};
 use crate::config::ModelConfig;
 use crate::db::Database;
 use crate::llm::{truncate_history, LLMClientPool, LLMMessage};
+use crate::skills::CoreSkills;
 use crate::tools::ToolRegistry;
 
 pub struct AgentLoop {
@@ -19,6 +20,7 @@ pub struct AgentLoop {
     max_tool_iterations: u32,
     tool_result_max_chars: usize,
     history_limit: u32,
+    core_skills: CoreSkills,
 }
 
 impl AgentLoop {
@@ -33,6 +35,7 @@ impl AgentLoop {
         max_tool_iterations: u32,
         tool_result_max_chars: usize,
         history_limit: u32,
+        core_skills: CoreSkills,
     ) -> Self {
         Self {
             agent_name,
@@ -45,6 +48,7 @@ impl AgentLoop {
             max_tool_iterations,
             tool_result_max_chars,
             history_limit,
+            core_skills,
         }
     }
 
@@ -316,6 +320,13 @@ impl AgentLoop {
     ) -> String {
         let mut prompt = self.character_sheet.clone();
 
+        // Core skills
+        let skills_section = self.core_skills.format_for_prompt();
+        if !skills_section.is_empty() {
+            prompt.push_str("\n\n");
+            prompt.push_str(&skills_section);
+        }
+
         // Cross-agent @mention context
         let mention_context = self.build_mention_context(message);
         if !mention_context.is_empty() {
@@ -455,6 +466,7 @@ mod tests {
             10,
             5000,
             20,
+            CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
         );
 
         let context = loop_.build_mention_context("Hey @robin, what's the status?");
@@ -490,6 +502,7 @@ mod tests {
             10,
             5000,
             20,
+            CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
         );
 
         let context = loop_.build_mention_context("@ino do something");
@@ -524,6 +537,7 @@ mod tests {
             10,
             5000,
             20,
+            CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
         );
 
         let context = loop_.build_mention_context("@unknown_agent hello");
@@ -561,6 +575,7 @@ mod tests {
             10,
             5000,
             20,
+            CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
         );
 
         let context = loop_.build_parent_context("parent-conv");
@@ -597,6 +612,7 @@ mod tests {
             10,
             5000,
             20,
+            CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
         );
 
         let context = loop_.build_parent_context("nonexistent-conv");

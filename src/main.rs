@@ -4,6 +4,7 @@ mod cli;
 mod config;
 mod db;
 mod llm;
+mod skills;
 mod tools;
 
 use std::path::PathBuf;
@@ -101,32 +102,35 @@ async fn run_agent(agent_name: &str, one_shot: Option<&str>) -> Result<(), Strin
     // Register task/mission/conversation tools
     tools::task_tools::register(&mut tool_registry, database.clone(), agent_name.to_string());
 
-    // Register delegation tools (needs Arc of parent registry, so defer until after other tools)
-    let parent_registry = Arc::new(tool_registry);
-    let mut tool_registry = tools::ToolRegistry::new();
+    // Register delegation tools (gated by DELEGATION_ENABLED)
+    if settings.delegation_enabled {
+        let parent_registry = Arc::new(tool_registry);
+        tool_registry = tools::ToolRegistry::new();
 
-    // Re-register all parent tools into the new registry
-    for def in parent_registry.get_all() {
-        tool_registry.register_raw(
-            &def.name,
-            &def.description,
-            def.parameters.clone(),
-            def.handler.clone(),
+        // Re-register all parent tools into the new registry
+        for def in parent_registry.get_all() {
+            tool_registry.register_raw(
+                &def.name,
+                &def.description,
+                def.parameters.clone(),
+                def.handler.clone(),
+            );
+        }
+
+        // Register delegate + delegate_parallel
+        tools::delegate::register(
+            &mut tool_registry,
+            pool.clone(),
+            fallback_chain.clone(),
+            primary_model.clone(),
+            parent_registry,
+            root_dir.clone(),
+            settings.subagent_max_parallel as usize,
+            settings.subagent_sleep_between_secs,
+            settings.tool_result_max_chars as usize,
         );
+        info!("delegation tools enabled");
     }
-
-    // Register delegate + delegate_parallel
-    tools::delegate::register(
-        &mut tool_registry,
-        pool.clone(),
-        fallback_chain.clone(),
-        primary_model.clone(),
-        parent_registry,
-        root_dir.clone(),
-        settings.subagent_max_parallel as usize,
-        settings.subagent_sleep_between_secs,
-        settings.tool_result_max_chars as usize,
-    );
 
     info!(tools = tool_registry.len(), "tool registry initialized");
 
@@ -138,7 +142,10 @@ async fn run_agent(agent_name: &str, one_shot: Option<&str>) -> Result<(), Strin
     )
     .await;
 
-    // 8. Create agent loop
+    // 8. Load core skills
+    let core_skills = skills::CoreSkills::load(&root_dir.join("config").join("skills"));
+
+    // 9. Create agent loop
     let agent_loop = agent_loop::AgentLoop::new(
         agent_name.to_string(),
         character_sheet,
@@ -150,9 +157,10 @@ async fn run_agent(agent_name: &str, one_shot: Option<&str>) -> Result<(), Strin
         settings.max_tool_iterations,
         settings.tool_result_max_chars as usize,
         settings.history_limit,
+        core_skills,
     );
 
-    // 9. Run CLI channel
+    // 10. Run CLI channel
     channels::run_cli(&agent_loop, one_shot).await;
 
     Ok(())
