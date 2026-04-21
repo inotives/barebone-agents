@@ -60,10 +60,10 @@
 - Tool definitions stored internally in OpenAI format, converted per-provider at call time
 
 ## Implementation Status
-- [ ] Phase 1: Core types + LLMClient trait + token estimation + truncation + unit tests
-- [ ] Phase 2: OpenAI-compatible client + message/tool conversion + think-tag stripping + unit tests
-- [ ] Phase 3: Anthropic client + content block handling + unit tests (no live test — no active API key)
-- [ ] Phase 4: Google Gemini client + synthetic IDs + schema stripping + unit tests
-- [ ] Phase 5: Client pool + fallback chain + integration test with real API
+- [x] Phase 1: Core types + LLMClient trait + token estimation + truncation + unit tests (8 tests)
+- [x] Phase 2: OpenAI-compatible client + message/tool conversion + think-tag stripping + unit tests (10 tests)
+- [x] Phase 3: Anthropic client + content block handling + unit tests (7 tests, no live test — no active API key)
+- [x] Phase 4: Google Gemini client + synthetic IDs + schema stripping + unit tests (11 tests)
+- [x] Phase 5: Client pool + fallback chain + unit tests (5 tests, live test deferred to EP-00005)
 
-## Status: IN PROGRESS
+## Status: DONE

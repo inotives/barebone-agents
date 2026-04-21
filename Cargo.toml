@@ -34,5 +34,14 @@ rusqlite = { version = "0.35", features = ["bundled"] }
 # Time
 chrono = "0.4"
 
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Async trait
+async-trait = "0.1"
+
+# Regex (for think-tag stripping)
+regex = "1"
+
 [dev-dependencies]
 tempfile = "3"
