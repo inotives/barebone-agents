@@ -11,18 +11,44 @@ Project level coding agent workflows and guidelines
 Project folder structure. Update this over each development phases. 
 
 ```
-project_name/
-├── pyproject.toml
+barebone-agents/
+├── Cargo.toml
 ├── .env                              # Secrets (gitignored)
 ├── .env.template
 ├── .gitignore
 ├── AGENTS.md
 ├── README.md
 │
+├── config/
+│   ├── models.yml                    # LLM model registry
+│   └── squad.yml                     # Team definitions (future)
+│
+├── agents/
+│   └── ino/                          # Default agent
+│       ├── AGENT.md                  # Identity + persona
+│       ├── agent.yml                 # Model + channel config
+│       └── .env                      # Agent-specific credentials
+│
+├── data/                             # Runtime data (gitignored)
+│   └── barebone-agent.db            # SQLite database
+│
+├── src/
+│   ├── main.rs                       # Entry point + startup wiring
+│   ├── cli.rs                        # CLI argument parsing (clap)
+│   ├── agent_loop.rs                 # Agent reasoning loop
+│   ├── config/                       # Config loading (env, models, agent, squad)
+│   ├── db/                           # SQLite layer (conversations, tasks, missions, schedule)
+│   ├── llm/                          # LLM clients (OpenAI-compat, Anthropic, Gemini, pool)
+│   ├── tools/                        # Tool registry + built-in tools + MCP client
+│   └── channels/                     # CLI channel
+│
 ├── docs/
-│   ├── SPECS.md                      # Permanent project spec
+│   ├── specs.md                      # Permanent project spec
 │   ├── EP-XXXXX_*.md                 # Active execution plans
 │   └── archived/                     # Completed EPs
+│
+└── .agents/
+    └── commands/                     # Slash command templates
 ```
 
 ---
@@ -100,7 +126,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
    Lifecycle: `IN PROGRESS` → `IN REVIEW` → `DONE` → `/archive-ep` moves to `docs/archived/`
 2. **Branch**: `git checkout -b feature/<topic>`
 3. **Implement** phase by phase, test after each
-4. **Run tests**: `uv run pytest tests/ -v` before any commit
+4. **Run tests**: `cargo test` before any commit
 5. **Pre-commit check**: Run `/pre-commit` before committing
 6. **PR + merge**
 

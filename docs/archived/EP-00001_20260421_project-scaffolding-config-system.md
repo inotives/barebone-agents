@@ -42,10 +42,10 @@
 - All config types derive `Debug, Clone, Deserialize`
 
 ## Implementation Status
-- [ ] Phase 1: Cargo project + directory structure + clap subcommands + tracing
-- [ ] Phase 2: Settings struct + env loading + per-agent merge + unit tests
-- [ ] Phase 3: Model registry parsing + Provider enum + unit tests
-- [ ] Phase 4: Agent config parsing + MCP server config + unit tests
-- [ ] Phase 5: Character sheet loading + squad config + unit tests
+- [x] Phase 1: Cargo project + directory structure + clap subcommands + tracing
+- [x] Phase 2: Settings struct + env loading + per-agent merge + unit tests (7 tests)
+- [x] Phase 3: Model registry parsing + Provider enum + unit tests (7 tests)
+- [x] Phase 4: Agent config parsing + MCP server config + unit tests (9 tests)
+- [x] Phase 5: Character sheet loading + squad config + unit tests (3 tests)
 
-## Status: IN PROGRESS
+## Status: DONE

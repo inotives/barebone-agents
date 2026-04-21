@@ -1,0 +1,219 @@
+models:
+  # more capable version of minimax2.5
+  - id: nvidia-minimax-2.7
+    provider: nvidia
+    model: minimaxai/minimax-m2.7
+    api_key_env: NVIDIA_API_KEY
+    base_url: https://integrate.api.nvidia.com/v1
+    context_window: 192000  # Staying just under the 196k native cap for stability
+    max_tokens: 8192        # Prevents gateway timeouts on long generations
+
+  # Latest google opensource gemma model
+  - id: nvidia-gemma-4-31b-it
+    provider: nvidia
+    model: google/gemma-4-31b-it
+    api_key_env: NVIDIA_API_KEY
+    base_url: https://integrate.api.nvidia.com/v1
+    temperature: 0.6
+    context_window: 192000  # Staying just under the 196k native cap for stability
+    max_tokens: 8192        # Prevents gateway timeouts on long generations
+
+  # more capable version of minimax2.1
+  - id: nvidia-minimax-2.5
+    provider: nvidia
+    model: minimaxai/minimax-m2.5
+    api_key_env: NVIDIA_API_KEY
+    base_url: https://integrate.api.nvidia.com/v1
+    context_window: 192000  # Staying just under the 196k native cap for stability
+    max_tokens: 8192        # Prevents gateway timeouts on long generations
+
+  # kimi - MoE with agent swarm
+  - id: nvidia-kimi-k2.5
+    provider: nvidia
+    model: moonshotai/kimi-k2.5
+    api_key_env: NVIDIA_API_KEY
+    base_url: https://integrate.api.nvidia.com/v1
+    context_window: 128000  # Staying just under the 196k native cap for stability
+    max_tokens: 8192        # Prevents gateway timeouts on long generations
+
+  # The Reliable All-Rounder
+  - id: nvidia-mistral-large-3
+    provider: nvidia
+    model: mistralai/mistral-large-3
+    api_key_env: NVIDIA_API_KEY
+    base_url: https://integrate.api.nvidia.com/v1
+    context_window: 131072
+    max_tokens: 8192
+
+  # The "Math & Logic" Specialist (v3.2)
+  - id: nvidia-deepseek-v3.2
+    provider: nvidia
+    model: deepseek-ai/deepseek-v3.2
+    api_key_env: NVIDIA_API_KEY
+    base_url: https://integrate.api.nvidia.com/v1
+    context_window: 128000
+    max_tokens: 4096
+
+  # The "Math & Logic" Specialist (v3.1)
+  - id: nvidia-deepseek-v3.1
+    provider: nvidia
+    model: deepseek-ai/deepseek-v3.1
+    api_key_env: NVIDIA_API_KEY
+    base_url: https://integrate.api.nvidia.com/v1
+    context_window: 128000
+    max_tokens: 4096
+
+  # High-speed Agentic Tasks
+  - id: nemotron-3-super
+    provider: nvidia
+    model: nvidia/nemotron-3-super-120b-a12b
+    api_key_env: NVIDIA_API_KEY
+    base_url: https://integrate.api.nvidia.com/v1
+    context_window: 131072 #optimize for free-tier stability
+    max_tokens: 8912 #Balanced for high-quality reasoning without timeouts
+
+  # Standard everytime do well model
+  - id: nvidia-glm5
+    provider: nvidia
+    model: z-ai/glm5
+    api_key_env: NVIDIA_API_KEY
+    base_url: https://integrate.api.nvidia.com/v1
+    context_window: 131072  # 128k is the stability 'sweet spot' for NIM Free Tier
+    max_tokens: 8192        # High enough to accommodate native thinking tokens
+
+  # Free Model - better at big context window and scientific explaining
+  - id: nvidia-qwen-3.5-122b
+    provider: nvidia
+    model: qwen/qwen3.5-122b-a10b
+    api_key_env: NVIDIA_API_KEY
+    base_url: https://integrate.api.nvidia.com/v1
+    context_window: 131072
+    max_tokens: 4096  # Adjusted down to 4k for Free Tier reliability
+
+  # Better than 122b model but not in free tier, might be rate limit
+  - id: nvidia-qwen3.5-397b
+    provider: nvidia
+    model: qwen/qwen3-5-397b-a17b
+    api_key_env: NVIDIA_API_KEY
+    base_url: https://integrate.api.nvidia.com/v1
+    context_window: 65536   # Reduced for higher reliability on the Free NIM
+    max_tokens: 4096        # Enough for the <think> tokens + a solid answer
+
+  # Groq (OpenAI-compatible, ultra-fast inference)
+  - id: groq-llama-3.3-70b
+    provider: groq
+    model: llama-3.3-70b-versatile
+    api_key_env: GROQ_API_KEY
+    base_url: https://api.groq.com/openai/v1
+    context_window: 128000
+    max_tokens: 32768
+
+  - id: groq-llama-3.1-8b
+    provider: groq
+    model: llama-3.1-8b-instant
+    api_key_env: GROQ_API_KEY
+    base_url: https://api.groq.com/openai/v1
+    context_window: 128000
+    max_tokens: 8192
+
+  - id: groq-llama-4-scout
+    provider: groq
+    model: meta-llama/llama-4-scout-17b-16e-instruct
+    api_key_env: GROQ_API_KEY
+    base_url: https://api.groq.com/openai/v1
+    context_window: 131072
+    max_tokens: 8192
+
+  - id: groq-qwen3-32b
+    provider: groq
+    model: qwen/qwen3-32b
+    api_key_env: GROQ_API_KEY
+    base_url: https://api.groq.com/openai/v1
+    context_window: 131072
+    max_tokens: 8192
+
+  - id: groq-kimi-k2
+    provider: groq
+    model: moonshotai/kimi-k2-instruct-0905
+    api_key_env: GROQ_API_KEY
+    base_url: https://api.groq.com/openai/v1
+    context_window: 131072
+    max_tokens: 16384
+
+  - id: groq-gpt-oss-120b
+    provider: groq
+    model: openai/gpt-oss-120b
+    api_key_env: GROQ_API_KEY
+    base_url: https://api.groq.com/openai/v1
+    context_window: 131072
+    max_tokens: 16384
+
+  # Anthropic
+  - id: claude-sonnet-4
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    api_key_env: ANTHROPIC_API_KEY
+    context_window: 200000
+    max_tokens: 16384
+
+  - id: claude-opus-4
+    provider: anthropic
+    model: claude-opus-4-20250514
+    api_key_env: ANTHROPIC_API_KEY
+    context_window: 200000
+    max_tokens: 16384
+
+  - id: claude-haiku-4
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+    api_key_env: ANTHROPIC_API_KEY
+    context_window: 200000
+    max_tokens: 8192
+
+  # Google
+  - id: gemini-2.5-pro
+    provider: google
+    model: gemini-2.5-pro
+    api_key_env: GOOGLE_GEMINI_API_KEY
+    context_window: 1048576
+    max_tokens: 65536
+
+  - id: gemini-2.5-flash
+    provider: google
+    model: gemini-2.5-flash
+    api_key_env: GOOGLE_GEMINI_API_KEY
+    context_window: 1048576
+    max_tokens: 65536
+
+  # OpenAI
+  - id: gpt-4o
+    provider: openai
+    model: gpt-4o
+    api_key_env: OPENAI_API_KEY
+    base_url: https://api.openai.com/v1
+    context_window: 128000
+    max_tokens: 16384
+
+  - id: gpt-4o-mini
+    provider: openai
+    model: gpt-4o-mini
+    api_key_env: OPENAI_API_KEY
+    base_url: https://api.openai.com/v1
+    context_window: 128000
+    max_tokens: 16384
+
+  # local
+  - id: ollama-gemma4
+    provider: ollama
+    model: gemma3:27b
+    base_url: http://localhost:11434/v1
+    context_window: 128000
+    max_tokens: 8192
+
+  - id: ollama-qwen3.5
+    provider: ollama
+    model: qwen3.5:4b
+    base_url: http://localhost:11434/v1
+    context_window: 32768
+    max_tokens: 8192
+

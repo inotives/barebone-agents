@@ -1,0 +1,12 @@
+class: leader
+model: gemini-2.5-flash
+fallbacks:
+  - nvidia-minimax-2.7
+  - groq-llama-3.3-70b
+
+channels:
+  discord:
+    enabled: false
+
+skills: []
+mcp_servers: []
