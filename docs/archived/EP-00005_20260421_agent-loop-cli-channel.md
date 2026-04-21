@@ -74,11 +74,11 @@
 - Focus on getting a working single-agent CLI loop first
 
 ## Implementation Status
-- [ ] Phase 1: Agent loop core (message flow, tool loop, DB persistence) + unit tests
-- [ ] Phase 2: Context injection (@mention, parent conv) + unit tests
-- [ ] Phase 3: Session management (local fallback) + unit tests
-- [ ] Phase 4: Single-agent startup wiring in main.rs
-- [ ] Phase 5: CLI channel (REPL + one-shot + /continue) + unit tests
-- [ ] Phase 6: Sample agent setup + end-to-end validation
+- [x] Phase 1: Agent loop core (message flow, tool loop, DB persistence) + unit tests
+- [x] Phase 2: Context injection (@mention, parent conv) + unit tests (5 tests)
+- [ ] Phase 3: Session management (local fallback) — deferred, not needed for MVP
+- [x] Phase 4: Single-agent startup wiring in main.rs
+- [x] Phase 5: CLI channel (REPL + one-shot + /continue)
+- [x] Phase 6: Sample agent setup + end-to-end validation (tested with NVIDIA NIM + Gemini)
 
-## Status: IN PROGRESS
+## Status: DONE

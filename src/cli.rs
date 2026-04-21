@@ -18,6 +18,9 @@ pub enum Commands {
         /// Agent name (matches agents/{name}/ directory)
         #[arg(short, long)]
         agent: String,
+        /// Send a single message and exit (one-shot mode)
+        #[arg(short, long)]
+        message: Option<String>,
     },
     /// Show agent status dashboard
     Status {

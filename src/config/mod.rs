@@ -1,6 +1,6 @@
-mod settings;
+pub mod settings;
 mod models;
-mod agent;
+pub mod agent;
 mod squad;
 
 pub use settings::Settings;
