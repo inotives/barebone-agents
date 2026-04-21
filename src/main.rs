@@ -61,7 +61,7 @@ async fn run_agent(agent_name: &str, one_shot: Option<&str>) -> Result<(), Strin
     let character_sheet = config::agent::load_character_sheet(&agent_dir, agent_name)?;
     info!(
         agent = %agent_name,
-        class = %agent_config.class,
+        role = %agent_config.role,
         model = %agent_config.model,
         "agent config loaded"
     );
@@ -100,6 +100,33 @@ async fn run_agent(agent_name: &str, one_shot: Option<&str>) -> Result<(), Strin
 
     // Register task/mission/conversation tools
     tools::task_tools::register(&mut tool_registry, database.clone(), agent_name.to_string());
+
+    // Register delegation tools (needs Arc of parent registry, so defer until after other tools)
+    let parent_registry = Arc::new(tool_registry);
+    let mut tool_registry = tools::ToolRegistry::new();
+
+    // Re-register all parent tools into the new registry
+    for def in parent_registry.get_all() {
+        tool_registry.register_raw(
+            &def.name,
+            &def.description,
+            def.parameters.clone(),
+            def.handler.clone(),
+        );
+    }
+
+    // Register delegate + delegate_parallel
+    tools::delegate::register(
+        &mut tool_registry,
+        pool.clone(),
+        fallback_chain.clone(),
+        primary_model.clone(),
+        parent_registry,
+        root_dir.clone(),
+        settings.subagent_max_parallel as usize,
+        settings.subagent_sleep_between_secs,
+        settings.tool_result_max_chars as usize,
+    );
 
     info!(tools = tool_registry.len(), "tool registry initialized");
 

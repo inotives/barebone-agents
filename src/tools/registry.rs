@@ -105,6 +105,30 @@ impl ToolRegistry {
     pub fn names(&self) -> Vec<String> {
         self.tools.keys().cloned().collect()
     }
+
+    /// Get all tool definitions (for building restricted registries).
+    pub fn get_all(&self) -> Vec<&ToolDef> {
+        self.tools.values().collect()
+    }
+
+    /// Register a tool with a pre-built handler (for cloning from another registry).
+    pub fn register_raw(
+        &mut self,
+        name: &str,
+        description: &str,
+        parameters: Value,
+        handler: ToolHandler,
+    ) {
+        self.tools.insert(
+            name.to_string(),
+            ToolDef {
+                name: name.to_string(),
+                description: description.to_string(),
+                parameters,
+                handler,
+            },
+        );
+    }
 }
 
 #[cfg(test)]

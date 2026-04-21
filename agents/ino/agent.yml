@@ -1,4 +1,4 @@
-class: leader
+role: leader
 model: gemini-2.5-flash
 fallbacks:
   - nvidia-minimax-2.7
