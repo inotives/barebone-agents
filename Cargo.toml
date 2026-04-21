@@ -28,5 +28,11 @@ dotenvy = "0.15"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# Database
+rusqlite = { version = "0.35", features = ["bundled"] }
+
+# Time
+chrono = "0.4"
+
 [dev-dependencies]
 tempfile = "3"
