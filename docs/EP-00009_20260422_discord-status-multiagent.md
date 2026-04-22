@@ -47,9 +47,9 @@
 - Discord bots run as separate tokio tasks per agent
 
 ## Implementation Status
-- [ ] Phase 1: Discord channel (bot, sessions, message splitting, guild config) + unit tests
-- [ ] Phase 2: Status subcommand (agents, tokens, tasks, missions, activity, JSON) + unit tests
-- [ ] Phase 3: Multi-agent startup (shared resources, CLI routing, multiple heartbeats)
-- [ ] Phase 4: Graceful shutdown for multi-agent
+- [x] Phase 1: Discord channel (bot, sessions, message splitting, guild config) + unit tests
+- [x] Phase 2: Status subcommand (agents, tokens, tasks, missions, activity, JSON) + unit tests
+- [x] Phase 3: Multi-agent startup (shared resources, CLI routing, multiple heartbeats)
+- [x] Phase 4: Graceful shutdown for multi-agent
 
-## Status: IN PROGRESS
+## Status: DONE
