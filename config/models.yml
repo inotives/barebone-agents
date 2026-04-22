@@ -1,4 +1,5 @@
 models:
+  # NVIDIA-NIM Models --------------------------------------------------------------------
   # more capable version of minimax2.5
   - id: nvidia-minimax-2.7
     provider: nvidia
@@ -27,7 +28,7 @@ models:
     context_window: 192000  # Staying just under the 196k native cap for stability
     max_tokens: 8192        # Prevents gateway timeouts on long generations
 
-  # kimi - MoE with agent swarm
+  # kimi - MoE with agent swarm -- Deprecated on 2026-05-10
   - id: nvidia-kimi-k2.5
     provider: nvidia
     model: moonshotai/kimi-k2.5
@@ -99,7 +100,7 @@ models:
     context_window: 65536   # Reduced for higher reliability on the Free NIM
     max_tokens: 4096        # Enough for the <think> tokens + a solid answer
 
-  # Groq (OpenAI-compatible, ultra-fast inference)
+  # Groq (OpenAI-compatible, ultra-fast inference) --------------------------------------------
   - id: groq-llama-3.3-70b
     provider: groq
     model: llama-3.3-70b-versatile
@@ -201,6 +202,63 @@ models:
     base_url: https://api.openai.com/v1
     context_window: 128000
     max_tokens: 16384
+
+  # OpenRouter (free tier)
+  - id: openrouter-free
+    provider: openrouter
+    model: openrouter/free
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    context_window: 200000
+    max_tokens: 8192
+
+  - id: openrouter-nemotron-3-super
+    provider: openrouter
+    model: nvidia/nemotron-3-super-120b-a12b:free
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    context_window: 262144
+    max_tokens: 8192
+
+  - id: openrouter-gemma-4-31b
+    provider: openrouter
+    model: google/gemma-4-31b-it:free
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    context_window: 262144
+    max_tokens: 8192
+
+  - id: openrouter-minimax-m2.5
+    provider: openrouter
+    model: minimax/minimax-m2.5:free
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    context_window: 196608
+    max_tokens: 8192
+
+  - id: openrouter-trinity-large
+    provider: openrouter
+    model: arcee-ai/trinity-large-preview:free
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    context_window: 131000
+    max_tokens: 8192
+
+  - id: openrouter-nemotron-nano-30b
+    provider: openrouter
+    model: nvidia/nemotron-3-nano-30b-a3b:free
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    context_window: 256000
+    max_tokens: 8192
+
+  - id: openrouter-ling-2.6-flash
+    provider: openrouter
+    model: inclusionai/ling-2.6-flash:free
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    context_window: 262144
+    max_tokens: 8192
 
   # local
   - id: ollama-gemma4

@@ -1,7 +1,11 @@
 role: leader
-model: gemini-2.5-flash
+model: openrouter-free
 fallbacks:
   - nvidia-minimax-2.7
+  - nvidia-minimax-2.5
+  - nvidia-gemma-4-31b-it
+  - nemotron-3-super
+  - gemini-2.5-flash
   - groq-llama-3.3-70b
 
 channels:

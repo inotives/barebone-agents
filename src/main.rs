@@ -4,6 +4,8 @@ mod cli;
 mod config;
 mod db;
 mod llm;
+mod scheduler;
+mod session;
 mod skills;
 mod tools;
 
@@ -145,23 +147,54 @@ async fn run_agent(agent_name: &str, one_shot: Option<&str>) -> Result<(), Strin
     // 8. Load core skills
     let core_skills = skills::CoreSkills::load(&root_dir.join("config").join("skills"));
 
-    // 9. Create agent loop
-    let agent_loop = agent_loop::AgentLoop::new(
+    let tool_registry = Arc::new(tool_registry);
+
+    // 9. Create session manager
+    let session_mgr = Arc::new(tokio::sync::Mutex::new(session::SessionManager::new(
+        agent_name,
+        None, // project_id — set via AKW MCP if connected
+        settings.session_ttl_minutes,
+        tool_registry.clone(),
+    )));
+
+    // 10. Create agent loop
+    let agent_loop = Arc::new(agent_loop::AgentLoop::new(
         agent_name.to_string(),
         character_sheet,
         pool,
         fallback_chain,
-        Arc::new(tool_registry),
-        database,
+        tool_registry,
+        database.clone(),
         primary_model,
         settings.max_tool_iterations,
         settings.tool_result_max_chars as usize,
         settings.history_limit,
         core_skills,
-    );
+    ));
 
-    // 10. Run CLI channel
+    // 11. Start heartbeat background task
+    let heartbeat_handle = {
+        let agent_loop = agent_loop.clone();
+        let db = database.clone();
+        let session_mgr = session_mgr.clone();
+        let name = agent_name.to_string();
+        let interval = settings.heartbeat_interval as u64;
+
+        tokio::spawn(async move {
+            scheduler::run_heartbeat(agent_loop, db, session_mgr, name, interval).await;
+        })
+    };
+
+    // 12. Run CLI channel (blocks until user exits)
     channels::run_cli(&agent_loop, one_shot).await;
+
+    // 13. Graceful shutdown
+    heartbeat_handle.abort();
+    {
+        let mut mgr = session_mgr.lock().await;
+        mgr.end_all().await;
+    }
+    info!("shutdown complete");
 
     Ok(())
 }
