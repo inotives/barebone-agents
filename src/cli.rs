@@ -13,11 +13,14 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Run an agent
+    /// Run one or more agents
     Run {
-        /// Agent name (matches agents/{name}/ directory)
-        #[arg(short, long)]
-        agent: String,
+        /// Agent name(s), comma-separated (e.g. ino,robin)
+        #[arg(short, long, required_unless_present = "all")]
+        agent: Option<String>,
+        /// Start all agents found in agents/ directory
+        #[arg(long, default_value_t = false)]
+        all: bool,
         /// Send a single message and exit (one-shot mode)
         #[arg(short, long)]
         message: Option<String>,

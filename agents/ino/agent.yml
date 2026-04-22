@@ -17,4 +17,7 @@ channels:
         requireMention: true
 
 skills: []
-mcp_servers: []
+mcp_servers:
+  - name: akw
+    command: uv
+    args: ["run", "--project", "/Users/toni.lim/Workspace/agent-knowledge-wikia", "agent-knowledge-server"]

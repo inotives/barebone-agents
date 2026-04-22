@@ -10,18 +10,28 @@ mod skills;
 mod status;
 mod tools;
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::Parser;
 use cli::{Cli, Commands};
+use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
+
+/// A fully initialized, running agent with its background handles.
+struct RunningAgent {
+    name: String,
+    agent_loop: Arc<agent_loop::AgentLoop>,
+    session_mgr: Arc<tokio::sync::Mutex<session::SessionManager>>,
+    heartbeat_handle: JoinHandle<()>,
+    discord_handle: Option<JoinHandle<()>>,
+}
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
 
-    // Initialize tracing with log level from args or default
     let log_level = cli.log_level.as_deref().unwrap_or("info");
     tracing_subscriber::fmt()
         .with_env_filter(log_level)
@@ -30,8 +40,8 @@ async fn main() {
     info!("barebone-agent v{}", env!("CARGO_PKG_VERSION"));
 
     match cli.command {
-        Commands::Run { agent, message } => {
-            if let Err(e) = run_agent(&agent, message.as_deref()).await {
+        Commands::Run { agent, all, message } => {
+            if let Err(e) = run_agents(agent.as_deref(), all, message.as_deref()).await {
                 error!(error = %e, "fatal error");
                 std::process::exit(1);
             }
@@ -50,20 +60,67 @@ async fn main() {
     }
 }
 
-async fn run_agent(agent_name: &str, one_shot: Option<&str>) -> Result<(), String> {
-    let root_dir = std::env::current_dir().map_err(|e| format!("Failed to get cwd: {}", e))?;
+/// Discover agent names from the agents/ directory.
+fn discover_agents(root_dir: &Path) -> Result<Vec<String>, String> {
+    let agents_dir = root_dir.join("agents");
+    let mut names = Vec::new();
+    let entries = std::fs::read_dir(&agents_dir)
+        .map_err(|e| format!("Failed to read agents/ directory: {}", e))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                // Skip hidden dirs and _roles
+                if !name.starts_with('.') && !name.starts_with('_') {
+                    // Must have agent.yml
+                    if path.join("agent.yml").exists() {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    names.sort();
+    Ok(names)
+}
 
-    // 1. Load settings from root .env
-    let settings = config::Settings::load(&root_dir);
-    info!(log_level = %settings.log_level, "settings loaded");
+/// Resolve the list of agent names from CLI args.
+fn resolve_agent_names(
+    agent_arg: Option<&str>,
+    all: bool,
+    root_dir: &Path,
+) -> Result<Vec<String>, String> {
+    if all {
+        let names = discover_agents(root_dir)?;
+        if names.is_empty() {
+            return Err("No agents found in agents/ directory".into());
+        }
+        return Ok(names);
+    }
 
-    // 2. Load model registry
-    let registry_path = root_dir.join("config").join("models.yml");
-    let model_registry = config::ModelRegistry::load(&registry_path)?;
-    info!(models = model_registry.models.len(), "model registry loaded");
+    match agent_arg {
+        Some(s) => {
+            let names: Vec<String> = s.split(',').map(|n| n.trim().to_string()).collect();
+            if names.is_empty() {
+                return Err("No agent names provided".into());
+            }
+            Ok(names)
+        }
+        None => Err("Specify --agent or --all".into()),
+    }
+}
 
-    // 3. Load agent config
-    let agent_dir = config::settings::agent_dir(&root_dir, agent_name);
+/// Initialize a single agent and return its RunningAgent.
+async fn init_agent(
+    agent_name: &str,
+    root_dir: &Path,
+    settings: &config::Settings,
+    model_registry: &config::ModelRegistry,
+    database: Arc<db::Database>,
+    core_skills: &skills::CoreSkills,
+) -> Result<RunningAgent, String> {
+    // Load agent config
+    let agent_dir = config::settings::agent_dir(root_dir, agent_name);
     let agent_config = config::AgentConfig::load(&agent_dir)?;
     let character_sheet = config::agent::load_character_sheet(&agent_dir, agent_name)?;
     info!(
@@ -73,47 +130,33 @@ async fn run_agent(agent_name: &str, one_shot: Option<&str>) -> Result<(), Strin
         "agent config loaded"
     );
 
-    // 4. Merge env and create LLM client pool
+    // Per-agent LLM client pool (uses agent-specific env for API keys)
     let merged_env = config::settings::merge_env(&settings.env, &agent_dir);
-    let pool = Arc::new(llm::LLMClientPool::new(&model_registry, &merged_env));
-    info!(clients = pool.len(), "LLM client pool initialized");
+    let pool = Arc::new(llm::LLMClientPool::new(model_registry, &merged_env));
 
-    // Build fallback chain
     let mut fallback_chain = vec![agent_config.model.clone()];
     fallback_chain.extend(agent_config.fallbacks.clone());
 
-    // Get primary model config for context window
     let primary_model = model_registry
         .get(&agent_config.model)
-        .ok_or_else(|| format!("Primary model '{}' not found in registry", agent_config.model))?
+        .ok_or_else(|| format!("[{}] Primary model '{}' not found in registry", agent_name, agent_config.model))?
         .clone();
 
-    // 5. Init database
-    let db_path = root_dir.join(&settings.sqlite_db_path);
-    let database = Arc::new(db::Database::open(&db_path)?);
     database.register_agent(agent_name)?;
-    info!("database initialized");
 
-    // 6. Create tool registry
+    // Per-agent tool registry
     let mut tool_registry = tools::ToolRegistry::new();
 
-    // Register file I/O + shell tools
     let workspace = Arc::new(PathBuf::from(&settings.workspace_dir));
     tools::file_tools::register(&mut tool_registry, workspace.clone());
     tools::shell_tool::register(&mut tool_registry, workspace);
-
-    // Register web tools
     tools::web_tools::register(&mut tool_registry, settings.tool_result_max_chars as usize);
-
-    // Register task/mission/conversation tools
     tools::task_tools::register(&mut tool_registry, database.clone(), agent_name.to_string());
 
-    // Register delegation tools (gated by DELEGATION_ENABLED)
     if settings.delegation_enabled {
         let parent_registry = Arc::new(tool_registry);
         tool_registry = tools::ToolRegistry::new();
 
-        // Re-register all parent tools into the new registry
         for def in parent_registry.get_all() {
             tool_registry.register_raw(
                 &def.name,
@@ -123,24 +166,23 @@ async fn run_agent(agent_name: &str, one_shot: Option<&str>) -> Result<(), Strin
             );
         }
 
-        // Register delegate + delegate_parallel
         tools::delegate::register(
             &mut tool_registry,
             pool.clone(),
             fallback_chain.clone(),
             primary_model.clone(),
             parent_registry,
-            root_dir.clone(),
+            root_dir.to_path_buf(),
             settings.subagent_max_parallel as usize,
             settings.subagent_sleep_between_secs,
             settings.tool_result_max_chars as usize,
         );
-        info!("delegation tools enabled");
+        info!(agent = %agent_name, "delegation tools enabled");
     }
 
-    info!(tools = tool_registry.len(), "tool registry initialized");
+    info!(agent = %agent_name, tools = tool_registry.len(), "tool registry initialized");
 
-    // 7. Load MCP servers (if configured)
+    // Per-agent MCP servers
     let _mcp_connections = tools::mcp::load_mcp_servers(
         &agent_config.mcp_servers,
         &merged_env,
@@ -148,20 +190,17 @@ async fn run_agent(agent_name: &str, one_shot: Option<&str>) -> Result<(), Strin
     )
     .await;
 
-    // 8. Load core skills
-    let core_skills = skills::CoreSkills::load(&root_dir.join("config").join("skills"));
-
     let tool_registry = Arc::new(tool_registry);
 
-    // 9. Create session manager
+    // Per-agent session manager
     let session_mgr = Arc::new(tokio::sync::Mutex::new(session::SessionManager::new(
         agent_name,
-        None, // project_id — set via AKW MCP if connected
+        None,
         settings.session_ttl_minutes,
         tool_registry.clone(),
     )));
 
-    // 10. Create agent loop
+    // Agent loop
     let agent_loop = Arc::new(agent_loop::AgentLoop::new(
         agent_name.to_string(),
         character_sheet,
@@ -173,23 +212,22 @@ async fn run_agent(agent_name: &str, one_shot: Option<&str>) -> Result<(), Strin
         settings.max_tool_iterations,
         settings.tool_result_max_chars as usize,
         settings.history_limit,
-        core_skills,
+        core_skills.clone(),
     ));
 
-    // 11. Start heartbeat background task
+    // Per-agent heartbeat
     let heartbeat_handle = {
-        let agent_loop = agent_loop.clone();
+        let al = agent_loop.clone();
         let db = database.clone();
-        let session_mgr = session_mgr.clone();
+        let sm = session_mgr.clone();
         let name = agent_name.to_string();
         let interval = settings.heartbeat_interval as u64;
-
         tokio::spawn(async move {
-            scheduler::run_heartbeat(agent_loop, db, session_mgr, name, interval).await;
+            scheduler::run_heartbeat(al, db, sm, name, interval).await;
         })
     };
 
-    // 12. Start Discord bot (if enabled)
+    // Per-agent Discord bot
     let discord_handle = if let Some(ref discord_cfg) = agent_config.channels.discord {
         if discord_cfg.enabled {
             let token = merged_env
@@ -197,7 +235,7 @@ async fn run_agent(agent_name: &str, one_shot: Option<&str>) -> Result<(), Strin
                 .cloned()
                 .unwrap_or_default();
             if token.is_empty() {
-                warn!("Discord enabled but DISCORD_BOT_TOKEN not set — skipping");
+                warn!(agent = %agent_name, "Discord enabled but DISCORD_BOT_TOKEN not set — skipping");
                 None
             } else {
                 match channels::run_discord(
@@ -213,7 +251,7 @@ async fn run_agent(agent_name: &str, one_shot: Option<&str>) -> Result<(), Strin
                         Some(handle)
                     }
                     Err(e) => {
-                        error!(error = %e, "Failed to start Discord bot");
+                        error!(agent = %agent_name, error = %e, "Failed to start Discord bot");
                         None
                     }
                 }
@@ -225,22 +263,93 @@ async fn run_agent(agent_name: &str, one_shot: Option<&str>) -> Result<(), Strin
         None
     };
 
-    // 13. Run CLI channel (blocks until user exits)
-    channels::run_cli(&agent_loop, one_shot).await;
+    Ok(RunningAgent {
+        name: agent_name.to_string(),
+        agent_loop,
+        session_mgr,
+        heartbeat_handle,
+        discord_handle,
+    })
+}
 
-    // 14. Graceful shutdown
-    heartbeat_handle.abort();
-    if let Some(handle) = discord_handle {
-        handle.abort();
-        info!("Discord bot stopped");
+async fn run_agents(
+    agent_arg: Option<&str>,
+    all: bool,
+    one_shot: Option<&str>,
+) -> Result<(), String> {
+    let root_dir = std::env::current_dir().map_err(|e| format!("Failed to get cwd: {}", e))?;
+
+    // 1. Shared resources
+    let settings = config::Settings::load(&root_dir);
+    info!(log_level = %settings.log_level, "settings loaded");
+
+    let registry_path = root_dir.join("config").join("models.yml");
+    let model_registry = config::ModelRegistry::load(&registry_path)?;
+    info!(models = model_registry.models.len(), "model registry loaded");
+
+    let db_path = root_dir.join(&settings.sqlite_db_path);
+    let database = Arc::new(db::Database::open(&db_path)?);
+    info!("database initialized");
+
+    let core_skills = skills::CoreSkills::load(&root_dir.join("config").join("skills"));
+
+    // 2. Resolve agent names
+    let agent_names = resolve_agent_names(agent_arg, all, &root_dir)?;
+    let default_agent = agent_names[0].clone();
+
+    info!(
+        agents = ?agent_names,
+        default = %default_agent,
+        "starting agents"
+    );
+
+    // 3. Initialize each agent
+    let mut running_agents: Vec<RunningAgent> = Vec::new();
+    for name in &agent_names {
+        match init_agent(name, &root_dir, &settings, &model_registry, database.clone(), &core_skills).await {
+            Ok(ra) => {
+                info!(agent = %name, "agent ready");
+                running_agents.push(ra);
+            }
+            Err(e) => {
+                error!(agent = %name, error = %e, "failed to initialize agent");
+                // Shut down already-started agents
+                shutdown_agents(&mut running_agents).await;
+                return Err(e);
+            }
+        }
     }
-    {
-        let mut mgr = session_mgr.lock().await;
-        mgr.end_all().await;
-    }
-    info!("shutdown complete");
+
+    // 4. Build agent loop map for CLI routing
+    let agent_loops: HashMap<String, Arc<agent_loop::AgentLoop>> = running_agents
+        .iter()
+        .map(|ra| (ra.name.clone(), ra.agent_loop.clone()))
+        .collect();
+
+    // 5. Run CLI channel (blocks until user exits)
+    channels::run_cli(&agent_loops, &default_agent, one_shot).await;
+
+    // 6. Graceful shutdown (reverse order)
+    shutdown_agents(&mut running_agents).await;
 
     Ok(())
+}
+
+/// Shut down all running agents in reverse startup order.
+async fn shutdown_agents(agents: &mut Vec<RunningAgent>) {
+    for ra in agents.iter_mut().rev() {
+        ra.heartbeat_handle.abort();
+        if let Some(handle) = ra.discord_handle.take() {
+            handle.abort();
+            info!(agent = %ra.name, "Discord bot stopped");
+        }
+        {
+            let mut mgr = ra.session_mgr.lock().await;
+            mgr.end_all().await;
+        }
+        info!(agent = %ra.name, "agent shut down");
+    }
+    info!("shutdown complete");
 }
 
 fn run_status(
