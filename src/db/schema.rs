@@ -76,6 +76,122 @@ impl Database {
             .collect();
         Ok(names)
     }
+
+    /// Get the most recent message timestamp for an agent.
+    pub fn get_agent_last_active(&self, agent_name: &str) -> Result<Option<String>, String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT MAX(created_at) FROM conversations WHERE agent_name = ?1",
+            [agent_name],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Failed to get last active: {}", e))
+    }
+
+    /// Get task status counts, optionally filtered by agent.
+    pub fn get_task_status_counts(
+        &self,
+        agent_name: Option<&str>,
+    ) -> Result<Vec<(String, i64)>, String> {
+        let conn = self.conn.lock().unwrap();
+        let (sql, params): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = match agent_name {
+            Some(name) => (
+                "SELECT status, COUNT(*) FROM tasks WHERE agent_name = ?1 GROUP BY status ORDER BY status",
+                vec![Box::new(name.to_string())],
+            ),
+            None => (
+                "SELECT status, COUNT(*) FROM tasks GROUP BY status ORDER BY status",
+                vec![],
+            ),
+        };
+
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| format!("Failed to prepare task counts: {}", e))?;
+        let counts = stmt
+            .query_map(params_ref.as_slice(), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|e| format!("Failed to query task counts: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(counts)
+    }
+
+    /// Get task count per status for a specific mission.
+    pub fn get_mission_task_progress(
+        &self,
+        mission_key: &str,
+    ) -> Result<(i64, i64), String> {
+        let conn = self.conn.lock().unwrap();
+        let total: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tasks WHERE mission_key = ?1",
+                [mission_key],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Failed to count mission tasks: {}", e))?;
+        let done: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tasks WHERE mission_key = ?1 AND status = 'done'",
+                [mission_key],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Failed to count done tasks: {}", e))?;
+        Ok((done, total))
+    }
+
+    /// Get recent activity (final messages) across agents, ordered by time desc.
+    pub fn get_recent_activity(
+        &self,
+        agent_name: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<(String, String, String, String, String)>, String> {
+        let conn = self.conn.lock().unwrap();
+        let (sql, params): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = match agent_name {
+            Some(name) => (
+                "SELECT created_at, agent_name, channel_type, role, \
+                 SUBSTR(content, 1, 120) \
+                 FROM conversations \
+                 WHERE agent_name = ?1 AND is_final = 1 \
+                 ORDER BY id DESC LIMIT ?2",
+                vec![
+                    Box::new(name.to_string()),
+                    Box::new(limit),
+                ],
+            ),
+            None => (
+                "SELECT created_at, agent_name, channel_type, role, \
+                 SUBSTR(content, 1, 120) \
+                 FROM conversations \
+                 WHERE is_final = 1 \
+                 ORDER BY id DESC LIMIT ?1",
+                vec![Box::new(limit)],
+            ),
+        };
+
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| format!("Failed to prepare activity: {}", e))?;
+        let rows = stmt
+            .query_map(params_ref.as_slice(), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(|e| format!("Failed to query activity: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(rows)
+    }
 }
 
 const SCHEMA_SQL: &str = r#"

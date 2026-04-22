@@ -27,6 +27,12 @@ pub enum Commands {
         /// Filter to specific agent
         #[arg(short, long)]
         agent: Option<String>,
+        /// Token usage period: today (default), week, total
+        #[arg(short, long, default_value = "today")]
+        tokens: String,
+        /// Show only a specific section: agents, tokens, tasks, missions, activity
+        #[arg(short, long)]
+        section: Option<String>,
         /// Output as JSON
         #[arg(long, default_value_t = false)]
         json: bool,

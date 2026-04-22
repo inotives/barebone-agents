@@ -7,6 +7,7 @@ mod llm;
 mod scheduler;
 mod session;
 mod skills;
+mod status;
 mod tools;
 
 use std::path::PathBuf;
@@ -14,7 +15,7 @@ use std::sync::Arc;
 
 use clap::Parser;
 use cli::{Cli, Commands};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[tokio::main]
 async fn main() {
@@ -35,13 +36,16 @@ async fn main() {
                 std::process::exit(1);
             }
         }
-        Commands::Status { agent, json } => {
-            info!("status query");
-            // TODO: EP-10 — status subcommand
-            println!(
-                "Status not yet implemented (agent: {:?}, json: {})",
-                agent, json
-            );
+        Commands::Status {
+            agent,
+            tokens,
+            section,
+            json,
+        } => {
+            if let Err(e) = run_status(&agent, &tokens, section.as_deref(), json) {
+                error!(error = %e, "status error");
+                std::process::exit(1);
+            }
         }
     }
 }
@@ -185,16 +189,89 @@ async fn run_agent(agent_name: &str, one_shot: Option<&str>) -> Result<(), Strin
         })
     };
 
-    // 12. Run CLI channel (blocks until user exits)
+    // 12. Start Discord bot (if enabled)
+    let discord_handle = if let Some(ref discord_cfg) = agent_config.channels.discord {
+        if discord_cfg.enabled {
+            let token = merged_env
+                .get("DISCORD_BOT_TOKEN")
+                .cloned()
+                .unwrap_or_default();
+            if token.is_empty() {
+                warn!("Discord enabled but DISCORD_BOT_TOKEN not set — skipping");
+                None
+            } else {
+                match channels::run_discord(
+                    agent_loop.clone(),
+                    session_mgr.clone(),
+                    discord_cfg.clone(),
+                    &token,
+                )
+                .await
+                {
+                    Ok(handle) => {
+                        info!(agent = %agent_name, "Discord bot started");
+                        Some(handle)
+                    }
+                    Err(e) => {
+                        error!(error = %e, "Failed to start Discord bot");
+                        None
+                    }
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // 13. Run CLI channel (blocks until user exits)
     channels::run_cli(&agent_loop, one_shot).await;
 
-    // 13. Graceful shutdown
+    // 14. Graceful shutdown
     heartbeat_handle.abort();
+    if let Some(handle) = discord_handle {
+        handle.abort();
+        info!("Discord bot stopped");
+    }
     {
         let mut mgr = session_mgr.lock().await;
         mgr.end_all().await;
     }
     info!("shutdown complete");
 
+    Ok(())
+}
+
+fn run_status(
+    agent_filter: &Option<String>,
+    tokens: &str,
+    section: Option<&str>,
+    json: bool,
+) -> Result<(), String> {
+    let root_dir = std::env::current_dir().map_err(|e| format!("Failed to get cwd: {}", e))?;
+
+    let settings = config::Settings::load(&root_dir);
+
+    let registry_path = root_dir.join("config").join("models.yml");
+    let model_registry = config::ModelRegistry::load(&registry_path)?;
+
+    let db_path = root_dir.join(&settings.sqlite_db_path);
+    let database = db::Database::open(&db_path)?;
+
+    let token_period = status::TokenPeriod::parse(tokens)?;
+    let section = match section {
+        Some(s) => status::Section::parse(s)?,
+        None => status::Section::All,
+    };
+
+    let query = status::StatusQuery {
+        agent_filter: agent_filter.clone(),
+        token_period,
+        section,
+        json,
+    };
+
+    status::run_status(&database, &root_dir, &model_registry, &query);
     Ok(())
 }

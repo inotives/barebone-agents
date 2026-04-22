@@ -26,7 +26,7 @@ pub struct ChannelConfig {
 pub struct DiscordConfig {
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default)]
+    #[serde(default, rename = "allowFrom")]
     pub allow_from: Vec<String>,
     #[serde(default)]
     pub guilds: HashMap<String, GuildConfig>,
@@ -107,7 +107,7 @@ fallbacks:
 channels:
   discord:
     enabled: true
-    allow_from: ["user-id-1"]
+    allowFrom: ["user-id-1"]
     guilds:
       "guild-id":
         requireMention: true

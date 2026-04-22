@@ -1,16 +1,20 @@
 role: leader
-model: openrouter-free
+model: nvidia-minimax-2.7
 fallbacks:
-  - nvidia-minimax-2.7
   - nvidia-minimax-2.5
   - nvidia-gemma-4-31b-it
   - nemotron-3-super
+  - openrouter-free
   - gemini-2.5-flash
   - groq-llama-3.3-70b
 
 channels:
   discord:
-    enabled: false
+    enabled: true
+    allowFrom: ["207679848406056960"]
+    guilds:
+      "1474374113597456425":
+        requireMention: true
 
 skills: []
 mcp_servers: []
