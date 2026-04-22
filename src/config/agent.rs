@@ -4,7 +4,7 @@ use std::path::Path;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentConfig {
-    pub class: String,
+    pub role: String,
     pub model: String,
     #[serde(default)]
     pub fallbacks: Vec<String>,
@@ -98,7 +98,7 @@ mod tests {
 
     fn sample_agent_yaml() -> &'static str {
         r#"
-class: leader
+role: leader
 model: nvidia-minimax-2.7
 fallbacks:
   - openrouter-deepseek-v3
@@ -130,7 +130,7 @@ mcp_servers:
 
     fn minimal_agent_yaml() -> &'static str {
         r#"
-class: coder
+role: coder
 model: claude-sonnet-4
 "#
     }
@@ -146,7 +146,7 @@ model: claude-sonnet-4
         write_agent_yml(dir.path(), sample_agent_yaml());
 
         let config = AgentConfig::load(dir.path()).unwrap();
-        assert_eq!(config.class, "leader");
+        assert_eq!(config.role, "leader");
         assert_eq!(config.model, "nvidia-minimax-2.7");
         assert_eq!(config.fallbacks.len(), 2);
         assert_eq!(config.skills.len(), 2);
@@ -159,7 +159,7 @@ model: claude-sonnet-4
         write_agent_yml(dir.path(), minimal_agent_yaml());
 
         let config = AgentConfig::load(dir.path()).unwrap();
-        assert_eq!(config.class, "coder");
+        assert_eq!(config.role, "coder");
         assert_eq!(config.model, "claude-sonnet-4");
         assert!(config.fallbacks.is_empty());
         assert!(config.skills.is_empty());

@@ -87,6 +87,13 @@ impl LLMClientPool {
     pub fn is_empty(&self) -> bool {
         self.clients.is_empty()
     }
+
+    /// Create an empty pool (for testing).
+    pub fn empty() -> Self {
+        Self {
+            clients: HashMap::new(),
+        }
+    }
 }
 
 fn build_client(model: &ModelConfig, env: &HashMap<String, String>) -> Option<Box<dyn LLMClient>> {
