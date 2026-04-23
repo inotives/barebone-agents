@@ -40,4 +40,130 @@ pub enum Commands {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+    /// Manage tasks
+    Tasks {
+        #[command(subcommand)]
+        command: TasksCommand,
+    },
+    /// Manage missions
+    Missions {
+        #[command(subcommand)]
+        command: MissionsCommand,
+    },
+    /// View conversations
+    Conversations {
+        #[command(subcommand)]
+        command: ConversationsCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum TasksCommand {
+    /// List tasks
+    List {
+        /// Filter by status (backlog, todo, in_progress, done, blocked)
+        #[arg(long)]
+        status: Option<String>,
+        /// Filter by agent name
+        #[arg(long)]
+        agent: Option<String>,
+        /// Filter by mission key
+        #[arg(long)]
+        mission: Option<String>,
+        /// Output as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Show task details
+    Show {
+        /// Task key (e.g. TSK-00001)
+        key: String,
+        /// Output as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Create a new task
+    Create {
+        /// Task title
+        #[arg(long)]
+        title: String,
+        /// Task description
+        #[arg(long)]
+        description: Option<String>,
+        /// Parent mission key
+        #[arg(long)]
+        mission: Option<String>,
+        /// Assign to agent
+        #[arg(long)]
+        agent: Option<String>,
+        /// Priority: critical, high, medium, low
+        #[arg(long, default_value = "medium")]
+        priority: String,
+        /// Schedule: hourly, daily@HH:MM, weekly@DAY@HH:MM, every:Nh/Nm
+        #[arg(long)]
+        schedule: Option<String>,
+        /// Output as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum MissionsCommand {
+    /// List missions
+    List {
+        /// Filter by status (active, paused, completed)
+        #[arg(long)]
+        status: Option<String>,
+        /// Output as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Show mission details and its tasks
+    Show {
+        /// Mission key (e.g. MIS-00001)
+        key: String,
+        /// Output as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Create a new mission
+    Create {
+        /// Mission title
+        #[arg(long)]
+        title: String,
+        /// Mission description
+        #[arg(long)]
+        description: Option<String>,
+        /// Output as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ConversationsCommand {
+    /// List conversations
+    List {
+        /// Filter by agent name
+        #[arg(long)]
+        agent: Option<String>,
+        /// Max number of conversations to show
+        #[arg(long, default_value = "20")]
+        limit: u32,
+        /// Output as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Show conversation messages
+    Show {
+        /// Conversation ID
+        id: String,
+        /// Show full turn details (tool calls, intermediate steps)
+        #[arg(long, default_value_t = false)]
+        full: bool,
+        /// Output as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
 }

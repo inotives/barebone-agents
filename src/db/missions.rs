@@ -110,6 +110,22 @@ impl Database {
         Ok(())
     }
 
+    /// Get a single mission by key.
+    pub fn get_mission(&self, key: &str) -> Result<Option<Mission>, String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT key, title, description, status, created_by, metadata, created_at, updated_at \
+             FROM missions WHERE key = ?1",
+            [key],
+            Self::map_mission_row,
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            _ => Err(format!("Failed to get mission: {}", e)),
+        })
+    }
+
     /// List missions with optional status filter.
     pub fn list_missions(&self, status: Option<&str>) -> Result<Vec<Mission>, String> {
         let conn = self.conn.lock().unwrap();

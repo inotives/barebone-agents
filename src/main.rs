@@ -1,6 +1,9 @@
 mod agent_loop;
 mod channels;
 mod cli;
+mod cmd_conversations;
+mod cmd_missions;
+mod cmd_tasks;
 mod config;
 mod db;
 mod llm;
@@ -54,6 +57,24 @@ async fn main() {
         } => {
             if let Err(e) = run_status(&agent, &tokens, section.as_deref(), json) {
                 error!(error = %e, "status error");
+                std::process::exit(1);
+            }
+        }
+        Commands::Tasks { command } => {
+            if let Err(e) = run_management_cmd(|db| cmd_tasks::run(db, command)) {
+                error!(error = %e, "tasks error");
+                std::process::exit(1);
+            }
+        }
+        Commands::Missions { command } => {
+            if let Err(e) = run_management_cmd(|db| cmd_missions::run(db, command)) {
+                error!(error = %e, "missions error");
+                std::process::exit(1);
+            }
+        }
+        Commands::Conversations { command } => {
+            if let Err(e) = run_management_cmd(|db| cmd_conversations::run(db, command)) {
+                error!(error = %e, "conversations error");
                 std::process::exit(1);
             }
         }
@@ -350,6 +371,18 @@ async fn shutdown_agents(agents: &mut Vec<RunningAgent>) {
         info!(agent = %ra.name, "agent shut down");
     }
     info!("shutdown complete");
+}
+
+/// Open the database and run a management command against it.
+fn run_management_cmd<F>(f: F) -> Result<(), String>
+where
+    F: FnOnce(&db::Database) -> Result<(), String>,
+{
+    let root_dir = std::env::current_dir().map_err(|e| format!("Failed to get cwd: {}", e))?;
+    let settings = config::Settings::load(&root_dir);
+    let db_path = root_dir.join(&settings.sqlite_db_path);
+    let database = db::Database::open(&db_path)?;
+    f(&database)
 }
 
 fn run_status(

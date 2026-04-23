@@ -23,6 +23,19 @@ pub struct TokenUsage {
     pub output_tokens: i64,
 }
 
+#[derive(Debug, Clone)]
+pub struct ConversationSummary {
+    pub conversation_id: String,
+    pub agent_name: String,
+    pub channel_type: String,
+    pub turn_count: i64,
+    pub message_count: i64,
+    pub total_input_tokens: i64,
+    pub total_output_tokens: i64,
+    pub first_message_at: String,
+    pub last_message_at: String,
+}
+
 impl Database {
     /// Save a message to the conversations table.
     pub fn save_message(
@@ -237,6 +250,116 @@ impl Database {
             .collect();
 
         messages.reverse();
+        Ok(messages)
+    }
+
+    /// List conversations grouped by conversation_id with summary stats.
+    pub fn list_conversations(
+        &self,
+        agent_name: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<ConversationSummary>, String> {
+        let conn = self.conn.lock().unwrap();
+
+        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(agent) =
+            agent_name
+        {
+            (
+                "SELECT conversation_id, agent_name, channel_type, \
+                 COUNT(DISTINCT turn_id) as turn_count, \
+                 COUNT(*) as message_count, \
+                 COALESCE(SUM(input_tokens), 0) as total_input_tokens, \
+                 COALESCE(SUM(output_tokens), 0) as total_output_tokens, \
+                 MIN(created_at) as first_message_at, \
+                 MAX(created_at) as last_message_at \
+                 FROM conversations WHERE agent_name = ?1 \
+                 GROUP BY conversation_id \
+                 ORDER BY last_message_at DESC LIMIT ?2"
+                    .to_string(),
+                vec![
+                    Box::new(agent.to_string()),
+                    Box::new(limit),
+                ],
+            )
+        } else {
+            (
+                "SELECT conversation_id, agent_name, channel_type, \
+                 COUNT(DISTINCT turn_id) as turn_count, \
+                 COUNT(*) as message_count, \
+                 COALESCE(SUM(input_tokens), 0) as total_input_tokens, \
+                 COALESCE(SUM(output_tokens), 0) as total_output_tokens, \
+                 MIN(created_at) as first_message_at, \
+                 MAX(created_at) as last_message_at \
+                 FROM conversations \
+                 GROUP BY conversation_id \
+                 ORDER BY last_message_at DESC LIMIT ?1"
+                    .to_string(),
+                vec![Box::new(limit)],
+            )
+        };
+
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| format!("Failed to prepare list_conversations: {}", e))?;
+
+        let rows = stmt
+            .query_map(params_ref.as_slice(), |row| {
+                Ok(ConversationSummary {
+                    conversation_id: row.get(0)?,
+                    agent_name: row.get(1)?,
+                    channel_type: row.get(2)?,
+                    turn_count: row.get(3)?,
+                    message_count: row.get(4)?,
+                    total_input_tokens: row.get(5)?,
+                    total_output_tokens: row.get(6)?,
+                    first_message_at: row.get(7)?,
+                    last_message_at: row.get(8)?,
+                })
+            })
+            .map_err(|e| format!("Failed to query conversations: {}", e))?;
+
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Load all messages in a conversation (including non-final), ordered by id.
+    pub fn load_conversation(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Vec<ConversationMessage>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, conversation_id, agent_name, role, content, channel_type, \
+                 model_used, input_tokens, output_tokens, turn_id, is_final, metadata, created_at \
+                 FROM conversations WHERE conversation_id = ?1 ORDER BY id",
+            )
+            .map_err(|e| format!("Failed to prepare load_conversation: {}", e))?;
+
+        let messages = stmt
+            .query_map([conversation_id], |row| {
+                Ok(ConversationMessage {
+                    id: row.get(0)?,
+                    conversation_id: row.get(1)?,
+                    agent_name: row.get(2)?,
+                    role: row.get(3)?,
+                    content: row.get(4)?,
+                    channel_type: row.get(5)?,
+                    model_used: row.get(6)?,
+                    input_tokens: row.get(7)?,
+                    output_tokens: row.get(8)?,
+                    turn_id: row.get(9)?,
+                    is_final: row.get(10)?,
+                    metadata: row.get(11)?,
+                    created_at: row.get(12)?,
+                })
+            })
+            .map_err(|e| format!("Failed to query conversation: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+
         Ok(messages)
     }
 }
