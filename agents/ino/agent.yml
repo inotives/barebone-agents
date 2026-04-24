@@ -17,6 +17,7 @@ channels:
         requireMention: true
 
 skills: []
+akw_skills: true
 mcp_servers:
   - name: akw
     command: uv

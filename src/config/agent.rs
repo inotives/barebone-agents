@@ -14,6 +14,9 @@ pub struct AgentConfig {
     pub skills: Vec<String>,
     #[serde(default)]
     pub mcp_servers: Vec<McpServerConfig>,
+    /// Enable dynamic skill loading from AKW MCP per task.
+    #[serde(default)]
+    pub akw_skills: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

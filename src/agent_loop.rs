@@ -21,6 +21,7 @@ pub struct AgentLoop {
     tool_result_max_chars: usize,
     history_limit: u32,
     core_skills: CoreSkills,
+    akw_skills_enabled: bool,
 }
 
 impl AgentLoop {
@@ -36,6 +37,7 @@ impl AgentLoop {
         tool_result_max_chars: usize,
         history_limit: u32,
         core_skills: CoreSkills,
+        akw_skills_enabled: bool,
     ) -> Self {
         Self {
             agent_name,
@@ -49,6 +51,7 @@ impl AgentLoop {
             tool_result_max_chars,
             history_limit,
             core_skills,
+            akw_skills_enabled,
         }
     }
 
@@ -93,8 +96,11 @@ impl AgentLoop {
             warn!(error = %e, "failed to save user message");
         }
 
+        // Fetch AKW skills based on the task/message (if enabled)
+        let akw_skills = self.fetch_akw_skills(message).await;
+
         // Build system prompt
-        let system = self.build_system_prompt(message, conversation_id, parent_id);
+        let system = self.build_system_prompt(message, conversation_id, parent_id, &akw_skills);
 
         // Convert history to LLM messages
         let mut messages: Vec<LLMMessage> = history
@@ -317,14 +323,21 @@ impl AgentLoop {
         message: &str,
         conversation_id: &str,
         parent_id: Option<&str>,
+        akw_skills: &str,
     ) -> String {
         let mut prompt = self.character_sheet.clone();
 
-        // Core skills
+        // Core skills (from config/skills/*.md)
         let skills_section = self.core_skills.format_for_prompt();
         if !skills_section.is_empty() {
             prompt.push_str("\n\n");
             prompt.push_str(&skills_section);
+        }
+
+        // AKW skills (from agent-knowledge MCP, fetched per-task)
+        if !akw_skills.is_empty() {
+            prompt.push_str("\n\n## AKW Skills\n\n");
+            prompt.push_str(akw_skills);
         }
 
         // Cross-agent @mention context
@@ -353,6 +366,97 @@ impl AgentLoop {
         }
 
         prompt
+    }
+
+    /// Fetch relevant skills from AKW MCP based on the task/message content.
+    /// Returns empty string if disabled or AKW unavailable.
+    async fn fetch_akw_skills(&self, message: &str) -> String {
+        if !self.akw_skills_enabled || !self.registry.has("mcp_akw__memory_search") {
+            return String::new();
+        }
+
+        // Search for skills matching the task/message
+        let search_result = self
+            .registry
+            .execute(
+                "mcp_akw__memory_search",
+                serde_json::json!({
+                    "query": message,
+                    "tier": "skill",
+                }),
+            )
+            .await;
+
+        debug!(
+            agent = %self.agent_name,
+            result_len = search_result.len(),
+            "AKW memory_search response"
+        );
+
+        let paths: Vec<String> = match serde_json::from_str::<Value>(&search_result) {
+            Ok(json) => {
+                // Handle multiple response formats:
+                // 1. {"result": [{...}, ...]} — wrapped array
+                // 2. [{...}, ...] — bare array
+                // 3. {"path": ...} — single object
+                let items = if let Some(arr) = json.get("result").and_then(|r| r.as_array()) {
+                    arr.clone()
+                } else if let Some(arr) = json.as_array() {
+                    arr.clone()
+                } else if json.get("path").is_some() {
+                    vec![json]
+                } else {
+                    Vec::new()
+                };
+
+                items
+                    .iter()
+                    .take(3)
+                    .filter_map(|item| {
+                        item.get("path").and_then(|p| p.as_str()).map(String::from)
+                    })
+                    .collect()
+            }
+            Err(e) => {
+                debug!(agent = %self.agent_name, error = %e, "failed to parse AKW search result");
+                return String::new();
+            }
+        };
+
+        debug!(agent = %self.agent_name, paths = ?paths, "AKW skill paths found");
+
+        if paths.is_empty() {
+            return String::new();
+        }
+
+        // Read each skill's full content
+        let mut skills = Vec::new();
+        for path in &paths {
+            let read_result = self
+                .registry
+                .execute(
+                    "mcp_akw__memory_read",
+                    serde_json::json!({"path": path}),
+                )
+                .await;
+
+            if let Ok(json) = serde_json::from_str::<Value>(&read_result) {
+                if let Some(content) = json.get("content").and_then(|c| c.as_str()) {
+                    skills.push(content.to_string());
+                }
+            } else if !read_result.is_empty() {
+                // Fallback: the result itself might be the content as plain text
+                skills.push(read_result);
+            }
+        }
+
+        debug!(
+            agent = %self.agent_name,
+            count = skills.len(),
+            "AKW skills loaded for task"
+        );
+
+        skills.join("\n\n---\n\n")
     }
 
     fn build_mention_context(&self, message: &str) -> String {
@@ -467,6 +571,7 @@ mod tests {
             5000,
             20,
             CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
+            false,
         );
 
         let context = loop_.build_mention_context("Hey @robin, what's the status?");
@@ -503,6 +608,7 @@ mod tests {
             5000,
             20,
             CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
+            false,
         );
 
         let context = loop_.build_mention_context("@ino do something");
@@ -538,6 +644,7 @@ mod tests {
             5000,
             20,
             CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
+            false,
         );
 
         let context = loop_.build_mention_context("@unknown_agent hello");
@@ -576,6 +683,7 @@ mod tests {
             5000,
             20,
             CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
+            false,
         );
 
         let context = loop_.build_parent_context("parent-conv");
@@ -613,6 +721,7 @@ mod tests {
             5000,
             20,
             CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
+            false,
         );
 
         let context = loop_.build_parent_context("nonexistent-conv");
