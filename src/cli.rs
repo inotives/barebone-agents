@@ -55,6 +55,34 @@ pub enum Commands {
         #[command(subcommand)]
         command: ConversationsCommand,
     },
+    /// View agent configurations
+    Agents {
+        #[command(subcommand)]
+        command: AgentsCommand,
+    },
+    /// Validate configuration files
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
+    /// View token usage breakdown
+    Tokens {
+        /// Filter by agent name
+        #[arg(long)]
+        agent: Option<String>,
+        /// Period: today (default), week, total
+        #[arg(long, default_value = "today")]
+        period: String,
+        /// Break down by model
+        #[arg(long, default_value_t = false)]
+        by_model: bool,
+        /// Break down by day
+        #[arg(long, default_value_t = false)]
+        by_day: bool,
+        /// Output as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -106,6 +134,31 @@ pub enum TasksCommand {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+    /// Update a task
+    Update {
+        /// Task key (e.g. TSK-00001)
+        key: String,
+        /// New status (backlog, todo, in_progress, done, blocked)
+        #[arg(long)]
+        status: Option<String>,
+        /// New priority (critical, high, medium, low)
+        #[arg(long)]
+        priority: Option<String>,
+        /// Assign to agent
+        #[arg(long)]
+        agent: Option<String>,
+        /// Output as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Delete a task
+    Delete {
+        /// Task key (e.g. TSK-00001)
+        key: String,
+        /// Output as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -139,6 +192,31 @@ pub enum MissionsCommand {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+    /// Update a mission
+    Update {
+        /// Mission key (e.g. MIS-00001)
+        key: String,
+        /// New status (active, paused, completed)
+        #[arg(long)]
+        status: Option<String>,
+        /// New title
+        #[arg(long)]
+        title: Option<String>,
+        /// New description
+        #[arg(long)]
+        description: Option<String>,
+        /// Output as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Delete a mission (fails if mission has tasks)
+    Delete {
+        /// Mission key (e.g. MIS-00001)
+        key: String,
+        /// Output as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -162,6 +240,34 @@ pub enum ConversationsCommand {
         /// Show full turn details (tool calls, intermediate steps)
         #[arg(long, default_value_t = false)]
         full: bool,
+        /// Output as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum AgentsCommand {
+    /// List all configured agents
+    List {
+        /// Output as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Show agent configuration details
+    Show {
+        /// Agent name
+        name: String,
+        /// Output as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ConfigCommand {
+    /// Validate all configuration files
+    Validate {
         /// Output as JSON
         #[arg(long, default_value_t = false)]
         json: bool,

@@ -360,6 +360,18 @@ impl Database {
         Ok(unblocked)
     }
 
+    /// Delete a task by key.
+    pub fn delete_task(&self, key: &str) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn
+            .execute("DELETE FROM tasks WHERE key = ?1", [key])
+            .map_err(|e| format!("Failed to delete task: {}", e))?;
+        if rows == 0 {
+            return Err(format!("Task not found: {}", key));
+        }
+        Ok(())
+    }
+
     /// Complete a task. One-time tasks → done, recurring tasks → reset to todo.
     pub fn complete_task(&self, key: &str, result: &str) -> Result<(), String> {
         let task = self

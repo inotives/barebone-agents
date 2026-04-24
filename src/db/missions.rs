@@ -126,6 +126,18 @@ impl Database {
         })
     }
 
+    /// Delete a mission by key.
+    pub fn delete_mission(&self, key: &str) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn
+            .execute("DELETE FROM missions WHERE key = ?1", [key])
+            .map_err(|e| format!("Failed to delete mission: {}", e))?;
+        if rows == 0 {
+            return Err(format!("Mission not found: {}", key));
+        }
+        Ok(())
+    }
+
     /// List missions with optional status filter.
     pub fn list_missions(&self, status: Option<&str>) -> Result<Vec<Mission>, String> {
         let conn = self.conn.lock().unwrap();

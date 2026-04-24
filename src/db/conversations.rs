@@ -324,6 +324,97 @@ impl Database {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
+    /// Get token usage grouped by model.
+    pub fn get_token_usage_by_model(
+        &self,
+        agent_name: Option<&str>,
+        since: Option<&str>,
+    ) -> Result<Vec<(String, i64, i64)>, String> {
+        let conn = self.conn.lock().unwrap();
+
+        let mut conditions = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(agent) = agent_name {
+            params.push(Box::new(agent.to_string()));
+            conditions.push(format!("agent_name = ?{}", params.len()));
+        }
+        if let Some(since) = since {
+            params.push(Box::new(since.to_string()));
+            conditions.push(format!("created_at >= ?{}", params.len()));
+        }
+        conditions.push("model_used IS NOT NULL".to_string());
+
+        let where_clause = format!(" WHERE {}", conditions.join(" AND "));
+
+        let sql = format!(
+            "SELECT model_used, COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) \
+             FROM conversations{} GROUP BY model_used ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC",
+            where_clause
+        );
+
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| format!("Failed to prepare get_token_usage_by_model: {}", e))?;
+
+        let rows = stmt
+            .query_map(params_ref.as_slice(), |row| {
+                Ok((row.get::<_, String>(0)?, row.get(1)?, row.get(2)?))
+            })
+            .map_err(|e| format!("Failed to query token usage by model: {}", e))?;
+
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Get token usage grouped by day.
+    pub fn get_token_usage_by_day(
+        &self,
+        agent_name: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<(String, i64, i64)>, String> {
+        let conn = self.conn.lock().unwrap();
+
+        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(agent) =
+            agent_name
+        {
+            (
+                "SELECT DATE(created_at) as day, \
+                 COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) \
+                 FROM conversations WHERE agent_name = ?1 \
+                 GROUP BY day ORDER BY day DESC LIMIT ?2"
+                    .to_string(),
+                vec![Box::new(agent.to_string()), Box::new(limit)],
+            )
+        } else {
+            (
+                "SELECT DATE(created_at) as day, \
+                 COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) \
+                 FROM conversations \
+                 GROUP BY day ORDER BY day DESC LIMIT ?1"
+                    .to_string(),
+                vec![Box::new(limit)],
+            )
+        };
+
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| format!("Failed to prepare get_token_usage_by_day: {}", e))?;
+
+        let rows = stmt
+            .query_map(params_ref.as_slice(), |row| {
+                Ok((row.get::<_, String>(0)?, row.get(1)?, row.get(2)?))
+            })
+            .map_err(|e| format!("Failed to query token usage by day: {}", e))?;
+
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
     /// Load all messages in a conversation (including non-final), ordered by id.
     pub fn load_conversation(
         &self,

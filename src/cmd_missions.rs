@@ -12,6 +12,21 @@ pub fn run(db: &Database, cmd: MissionsCommand) -> Result<(), String> {
             description,
             json,
         } => run_create(db, &title, description.as_deref(), json),
+        MissionsCommand::Update {
+            key,
+            status,
+            title,
+            description,
+            json,
+        } => run_update(
+            db,
+            &key,
+            status.as_deref(),
+            title.as_deref(),
+            description.as_deref(),
+            json,
+        ),
+        MissionsCommand::Delete { key, json } => run_delete(db, &key, json),
     }
 }
 
@@ -136,6 +151,61 @@ fn run_create(db: &Database, title: &str, description: Option<&str>, as_json: bo
     Ok(())
 }
 
+fn run_update(
+    db: &Database,
+    key: &str,
+    status: Option<&str>,
+    title: Option<&str>,
+    description: Option<&str>,
+    as_json: bool,
+) -> Result<(), String> {
+    db.get_mission(key)?
+        .ok_or_else(|| format!("Mission not found: {}", key))?;
+
+    if status.is_none() && title.is_none() && description.is_none() {
+        return Err("No fields to update. Use --status, --title, or --description".into());
+    }
+
+    db.update_mission(key, status, title, description)?;
+
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({"key": key, "updated": true})).unwrap()
+        );
+    } else {
+        println!("Updated mission {}", key);
+    }
+    Ok(())
+}
+
+fn run_delete(db: &Database, key: &str, as_json: bool) -> Result<(), String> {
+    db.get_mission(key)?
+        .ok_or_else(|| format!("Mission not found: {}", key))?;
+
+    // Refuse if mission has tasks
+    let tasks = db.list_tasks(None, None, Some(key))?;
+    if !tasks.is_empty() {
+        return Err(format!(
+            "Cannot delete mission {} — it has {} task(s). Delete tasks first.",
+            key,
+            tasks.len()
+        ));
+    }
+
+    db.delete_mission(key)?;
+
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({"key": key, "deleted": true})).unwrap()
+        );
+    } else {
+        println!("Deleted mission {}", key);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,5 +253,59 @@ mod tests {
         // Should show mission + 2 tasks
         run_show(&db, &mkey, false).unwrap();
         run_show(&db, &mkey, true).unwrap();
+    }
+
+    #[test]
+    fn test_update() {
+        let db = setup();
+        let key = db.create_mission("Original", None, None).unwrap();
+
+        run_update(&db, &key, Some("paused"), Some("Renamed"), None, false).unwrap();
+
+        let m = db.get_mission(&key).unwrap().unwrap();
+        assert_eq!(m.status, "paused");
+        assert_eq!(m.title, "Renamed");
+    }
+
+    #[test]
+    fn test_update_not_found() {
+        let db = setup();
+        let result = run_update(&db, "MIS-99999", Some("paused"), None, None, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_update_no_fields() {
+        let db = setup();
+        let key = db.create_mission("Test", None, None).unwrap();
+        let result = run_update(&db, &key, None, None, None, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_delete_empty_mission() {
+        let db = setup();
+        let key = db.create_mission("Test", None, None).unwrap();
+        run_delete(&db, &key, false).unwrap();
+        assert!(db.get_mission(&key).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_delete_refuses_with_tasks() {
+        let db = setup();
+        let mkey = db.create_mission("Test", None, None).unwrap();
+        db.create_task("Task", None, Some(&mkey), None, None, None, None)
+            .unwrap();
+
+        let result = run_delete(&db, &mkey, false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("1 task(s)"));
+    }
+
+    #[test]
+    fn test_delete_not_found() {
+        let db = setup();
+        let result = run_delete(&db, "MIS-99999", false);
+        assert!(result.is_err());
     }
 }

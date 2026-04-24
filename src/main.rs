@@ -1,9 +1,12 @@
 mod agent_loop;
 mod channels;
 mod cli;
+mod cmd_agents;
+mod cmd_config;
 mod cmd_conversations;
 mod cmd_missions;
 mod cmd_tasks;
+mod cmd_tokens;
 mod config;
 mod db;
 mod llm;
@@ -78,11 +81,40 @@ async fn main() {
                 std::process::exit(1);
             }
         }
+        Commands::Agents { command } => {
+            if let Err(e) = run_agents_cmd(command) {
+                error!(error = %e, "agents error");
+                std::process::exit(1);
+            }
+        }
+        Commands::Config { command } => {
+            let root_dir = std::env::current_dir()
+                .map_err(|e| format!("Failed to get cwd: {}", e))
+                .unwrap();
+            if let Err(e) = cmd_config::run(&root_dir, command) {
+                error!(error = %e, "config error");
+                std::process::exit(1);
+            }
+        }
+        Commands::Tokens {
+            agent,
+            period,
+            by_model,
+            by_day,
+            json,
+        } => {
+            if let Err(e) = run_management_cmd(|db| {
+                cmd_tokens::run(db, agent.as_deref(), &period, by_model, by_day, json)
+            }) {
+                error!(error = %e, "tokens error");
+                std::process::exit(1);
+            }
+        }
     }
 }
 
 /// Discover agent names from the agents/ directory.
-fn discover_agents(root_dir: &Path) -> Result<Vec<String>, String> {
+pub(crate) fn discover_agents(root_dir: &Path) -> Result<Vec<String>, String> {
     let agents_dir = root_dir.join("agents");
     let mut names = Vec::new();
     let entries = std::fs::read_dir(&agents_dir)
@@ -234,6 +266,7 @@ async fn init_agent(
         settings.tool_result_max_chars as usize,
         settings.history_limit,
         core_skills.clone(),
+        agent_config.akw_skills,
     ));
 
     // Per-agent heartbeat
@@ -371,6 +404,17 @@ async fn shutdown_agents(agents: &mut Vec<RunningAgent>) {
         info!(agent = %ra.name, "agent shut down");
     }
     info!("shutdown complete");
+}
+
+/// Run an agents command (needs root_dir + model_registry + db).
+fn run_agents_cmd(cmd: cli::AgentsCommand) -> Result<(), String> {
+    let root_dir = std::env::current_dir().map_err(|e| format!("Failed to get cwd: {}", e))?;
+    let settings = config::Settings::load(&root_dir);
+    let registry_path = root_dir.join("config").join("models.yml");
+    let model_registry = config::ModelRegistry::load(&registry_path)?;
+    let db_path = root_dir.join(&settings.sqlite_db_path);
+    let database = db::Database::open(&db_path)?;
+    cmd_agents::run(&database, &root_dir, &model_registry, cmd)
 }
 
 /// Open the database and run a management command against it.

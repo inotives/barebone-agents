@@ -30,6 +30,21 @@ pub fn run(db: &Database, cmd: TasksCommand) -> Result<(), String> {
             schedule.as_deref(),
             json,
         ),
+        TasksCommand::Update {
+            key,
+            status,
+            priority,
+            agent,
+            json,
+        } => run_update(
+            db,
+            &key,
+            status.as_deref(),
+            priority.as_deref(),
+            agent.as_deref(),
+            json,
+        ),
+        TasksCommand::Delete { key, json } => run_delete(db, &key, json),
     }
 }
 
@@ -159,6 +174,52 @@ fn run_create(
     Ok(())
 }
 
+fn run_update(
+    db: &Database,
+    key: &str,
+    status: Option<&str>,
+    priority: Option<&str>,
+    agent: Option<&str>,
+    as_json: bool,
+) -> Result<(), String> {
+    // Verify task exists
+    db.get_task(key)?
+        .ok_or_else(|| format!("Task not found: {}", key))?;
+
+    if status.is_none() && priority.is_none() && agent.is_none() {
+        return Err("No fields to update. Use --status, --priority, or --agent".into());
+    }
+
+    db.update_task(key, status, None, agent, priority)?;
+
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({"key": key, "updated": true})).unwrap()
+        );
+    } else {
+        println!("Updated task {}", key);
+    }
+    Ok(())
+}
+
+fn run_delete(db: &Database, key: &str, as_json: bool) -> Result<(), String> {
+    db.get_task(key)?
+        .ok_or_else(|| format!("Task not found: {}", key))?;
+
+    db.delete_task(key)?;
+
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({"key": key, "deleted": true})).unwrap()
+        );
+    } else {
+        println!("Deleted task {}", key);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,5 +275,55 @@ mod tests {
         let tasks = db.list_tasks(Some("ino"), None, None).unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].title, "Task A");
+    }
+
+    #[test]
+    fn test_update() {
+        let db = setup();
+        let key = db
+            .create_task("Task", None, None, None, None, Some("low"), None)
+            .unwrap();
+
+        run_update(&db, &key, Some("in_progress"), Some("high"), Some("ino"), false).unwrap();
+
+        let task = db.get_task(&key).unwrap().unwrap();
+        assert_eq!(task.status, "in_progress");
+        assert_eq!(task.priority, "high");
+        assert_eq!(task.agent_name.as_deref(), Some("ino"));
+    }
+
+    #[test]
+    fn test_update_not_found() {
+        let db = setup();
+        let result = run_update(&db, "TSK-99999", Some("done"), None, None, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_update_no_fields() {
+        let db = setup();
+        let key = db
+            .create_task("Task", None, None, None, None, None, None)
+            .unwrap();
+        let result = run_update(&db, &key, None, None, None, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_delete() {
+        let db = setup();
+        let key = db
+            .create_task("Task", None, None, None, None, None, None)
+            .unwrap();
+
+        run_delete(&db, &key, false).unwrap();
+        assert!(db.get_task(&key).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_delete_not_found() {
+        let db = setup();
+        let result = run_delete(&db, "TSK-99999", false);
+        assert!(result.is_err());
     }
 }
