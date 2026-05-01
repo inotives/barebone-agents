@@ -81,11 +81,23 @@ When you have no in-progress tasks, no unread messages, and no pending conversat
 
 ### Knowledge Base (via Agent Knowledge MCP)
 
-If the agent-knowledge MCP server is connected, you have access to persistent knowledge:
+If the agent-knowledge MCP server is connected, you have access to persistent knowledge across a numbered three-tier wiki (`1_drafts/`, `2_knowledges/`, `3_intelligences/`).
 
-- **Search before acting:** `mcp_akw__memory_search(query="<topic>")` — check for related past context
-- **List all skills:** `mcp_akw__memory_index(tier="skill")` — discover available skills
-- **Read a skill/page:** `mcp_akw__memory_read(path="<path>")` — read full content
-- **Save findings:** `mcp_akw__memory_create(path="knowledge/<topic>.md", ...)` — save research
+**Knowledge / past context:**
+- **Search before acting:** `mcp_akw__memory_search(query="<topic>")` — check related notes, past decisions, session summaries
+- **Read a page:** `mcp_akw__memory_read(path="<path>")` — read full content
+- **Save findings:** `mcp_akw__memory_create(path="1_drafts/2_knowledges/<topic>.md", ...)` — write to drafts; the curator promotes to `2_knowledges/`
 
-Search when: starting a new task, boss references past work, or you're about to make a choice you might have made before.
+**Skills (capabilities):**
+- **Find a skill:** `mcp_akw__skill_search(query="<topic>" [, domain="engineering"])` — ranked SKILL.md bundles. Use this when equipping a capability ("how do I X?")
+- **Equip a skill:** `mcp_akw__skill_get(skill_path="<path>")` — returns SKILL.md content + bundle manifest (resources, scripts, tests)
+
+**Agent personas (roles):**
+
+When you `delegate` with a `role`, the harness resolves the persona in this order: local `agents/_roles/{role}.md` first, then AKW as a long-tail fallback. The local set is your team-curated taxonomy — `analyst`, `architect`, `coder`, `docs-specialist`, `ops-engineer`, `qa-engineer`, `researcher`, `reviewer`, `writer`. Use these names by default.
+
+If you genuinely need a persona that isn't in the local set, AKW exposes a wider catalog:
+- **Find a persona:** `mcp_akw__agent_search(query="<role>" [, domain="engineering"])` — ranked persona files
+- **Load a persona:** `mcp_akw__agent_get(agent_path="<path>")` — returns persona content + frontmatter
+
+Search when: starting a new task, boss references past work, or you're about to make a choice you might have made before. Skills/agents are excluded from `memory_search` — use the dedicated tools above for them.
