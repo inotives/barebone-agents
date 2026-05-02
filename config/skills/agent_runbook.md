@@ -111,3 +111,27 @@ If you genuinely need a persona that isn't in the local set, AKW exposes a wider
 - **Load a persona:** `mcp_akw__agent_get(agent_path="<path>")` — returns persona content + frontmatter
 
 Search when: starting a new task, boss references past work, or you're about to make a choice you might have made before. Skills/agents are excluded from `memory_search` — use the dedicated tools above for them.
+
+### Pulling from AKW into the local pool
+
+The local-first pools (`agents/_skills/`, `agents/_roles/`) are team-curated. When you discover an AKW skill or persona that proves useful, the operator can promote it into the local pool with the CLI — no manual copy-paste:
+
+```bash
+barebone-agent skill search <query>            # top 5 AKW matches (no write)
+barebone-agent skill pull <slug-or-path>       # writes agents/_skills/<slug>.md
+barebone-agent skill pull <slug> --force       # overwrite an existing local file
+barebone-agent skill pull <slug> --rename foo  # write under a different filename
+barebone-agent skill list                      # show what's in the local pool
+
+barebone-agent role search <query>             # same shape for personas
+barebone-agent role pull <slug-or-path>        # writes agents/_roles/<slug>.md
+barebone-agent role list
+```
+
+When to pull vs. author locally from scratch:
+- **Pull** when AKW has a skill/persona that already does what you want. The pull synthesizes a `keywords:` block from `tags`/`trigger_tags` so the equipped-skills selector picks it up immediately.
+- **Author locally** when you need project-specific behavior, or when the AKW version needs heavy editing — once the file is in `agents/_skills/`, it's the source of truth.
+
+To refresh a pulled skill from AKW, run `pull --force <slug>` (overwrites local edits) or delete the local file and pull again. There is no separate refresh verb — pull is one-way (AKW → local).
+
+The CLI prints the resolved AKW MCP source on every invocation (e.g. `Using akw config from agents/ino/agent.yml`). Pass `--agent <name>` to choose a specific agent's MCP config when more than one declares an `akw` server.
