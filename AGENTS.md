@@ -24,6 +24,8 @@ barebone-agents/
 │   └── squad.yml                     # Team definitions (future)
 │
 ├── agents/
+│   ├── _roles/                       # Sub-agent persona templates (delegate role:)
+│   ├── _skills/                      # Local task-matched skill pool (hot-reload)
 │   └── ino/                          # Default agent
 │       ├── AGENT.md                  # Identity + persona
 │       ├── agent.yml                 # Model + channel config

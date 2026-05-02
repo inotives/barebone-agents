@@ -267,6 +267,9 @@ async fn init_agent(
         settings.history_limit,
         core_skills.clone(),
         agent_config.akw_skills,
+        root_dir.join("agents").join("_skills"),
+        settings.skills_token_budget,
+        settings.skills_min_match_hits,
     ));
 
     // Per-agent heartbeat

@@ -593,11 +593,12 @@ started_at: 2026-04-21T12:00:00Z
 
 Appended to system prompt in order:
 
-1. **Global skills** — always included (3 skills, ~2450 tokens total)
-2. **Dynamic skills** — keyword-matched from agent's equipped pool within token budget
-3. **AKW knowledge** — `recommended_context` from `group_start()` (cached per group)
-4. **Parent conversation** — last 5 messages from parent conv (if chained)
-5. **Cross-agent @mentions** — recent tasks + messages from mentioned agents
+1. **Core skills** (`config/skills/*.md`) — always-injected. Loaded at startup; restart to reload.
+2. **Equipped skills** (`agents/_skills/*.md`) — task-matched from a hot-reloaded local pool. Tokenizer scores each file by keyword + body word match against the user message, drops entries below `SKILLS_MIN_MATCH_HITS`, packs top scorers into `SKILLS_TOKEN_BUDGET` (file granularity). Header: `## Equipped Skills`.
+3. **AKW skills** — fires only when the local Equipped pool returns zero matches. Calls `mcp_akw__skill_search(query=<message>)`, top 3 paths fetched via `mcp_akw__memory_read`. Header: `## AKW Skills`.
+4. **AKW knowledge** — `recommended_context` from `group_start()` (cached per group).
+5. **Parent conversation** — last 5 messages from parent conv (if chained).
+6. **Cross-agent @mentions** — recent tasks + messages from mentioned agents.
 
 ### 6.6 Cross-Agent Context
 
