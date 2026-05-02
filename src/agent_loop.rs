@@ -371,18 +371,18 @@ impl AgentLoop {
     /// Fetch relevant skills from AKW MCP based on the task/message content.
     /// Returns empty string if disabled or AKW unavailable.
     async fn fetch_akw_skills(&self, message: &str) -> String {
-        if !self.akw_skills_enabled || !self.registry.has("mcp_akw__memory_search") {
+        if !self.akw_skills_enabled || !self.registry.has("mcp_akw__skill_search") {
             return String::new();
         }
 
-        // Search for skills matching the task/message
+        // Search for skills matching the task/message. skill_search is tier-scoped
+        // by definition (only walks 3_intelligences/skills/**/SKILL.md).
         let search_result = self
             .registry
             .execute(
-                "mcp_akw__memory_search",
+                "mcp_akw__skill_search",
                 serde_json::json!({
                     "query": message,
-                    "tier": "skill",
                 }),
             )
             .await;
@@ -390,7 +390,7 @@ impl AgentLoop {
         debug!(
             agent = %self.agent_name,
             result_len = search_result.len(),
-            "AKW memory_search response"
+            "AKW skill_search response"
         );
 
         let paths: Vec<String> = match serde_json::from_str::<Value>(&search_result) {

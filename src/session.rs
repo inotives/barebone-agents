@@ -8,6 +8,9 @@ use crate::tools::ToolRegistry;
 
 /// Manages AKW sessions across channels.
 /// Best-effort — if AKW MCP is unavailable, silently skips.
+///
+/// On the wire, AKW now exposes a "group" lifecycle (group_start/group_log/group_end);
+/// we keep `session` naming on our side because that's our domain (a CLI/Discord conversation).
 pub struct SessionManager {
     sessions: HashMap<String, ActiveSession>,
     agent_name: String,
@@ -17,7 +20,7 @@ pub struct SessionManager {
 }
 
 struct ActiveSession {
-    session_id: Option<String>,
+    group_id: Option<String>,
     conv_id: String,
     channel_type: String,
     recommended_context: Vec<String>,
@@ -52,10 +55,10 @@ impl SessionManager {
             // For Discord, check TTL
             if channel_type == "discord" && session.last_activity.elapsed() > self.ttl {
                 // TTL expired — end old session, start new one
-                let old_session_id = session.session_id.clone();
+                let had_group = session.group_id.is_some();
                 self.sessions.remove(conv_id);
-                if let Some(sid) = old_session_id {
-                    self.end_akw_session(&sid).await;
+                if had_group {
+                    self.end_akw_session().await;
                 }
                 // Fall through to create new session
             } else {
@@ -66,10 +69,10 @@ impl SessionManager {
         }
 
         // Start new session
-        let (session_id, context) = self.start_akw_session(conv_id, channel_type).await;
+        let (group_id, context) = self.start_akw_session(conv_id, channel_type).await;
 
         let session = ActiveSession {
-            session_id,
+            group_id,
             conv_id: conv_id.to_string(),
             channel_type: channel_type.to_string(),
             recommended_context: context.clone(),
@@ -87,23 +90,25 @@ impl SessionManager {
             None => return,
         };
 
-        let session_id = match &session.session_id {
-            Some(sid) => sid.clone(),
-            None => return, // No AKW session
-        };
+        if session.group_id.is_none() {
+            return; // No AKW group active
+        }
 
         // Truncate to 500 chars
         let req_truncated: String = request.chars().take(500).collect();
         let resp_truncated: String = response.chars().take(500).collect();
 
+        // group_log keys onto the active group internally when group_id is omitted.
+        // Payload shape: {turns: [{request, response}]}.
         let _ = self
             .registry
             .execute(
-                "mcp_akw__session_log",
+                "mcp_akw__group_log",
                 json!({
-                    "session_id": session_id,
-                    "request": req_truncated,
-                    "response": resp_truncated,
+                    "turns": [{
+                        "request": req_truncated,
+                        "response": resp_truncated,
+                    }],
                 }),
             )
             .await;
@@ -114,8 +119,8 @@ impl SessionManager {
     /// End a specific session by conversation ID.
     pub async fn end_session(&mut self, conv_id: &str) {
         if let Some(session) = self.sessions.remove(conv_id) {
-            if let Some(sid) = session.session_id {
-                self.end_akw_session(&sid).await;
+            if session.group_id.is_some() {
+                self.end_akw_session().await;
             }
             info!(conv_id = %conv_id, "session ended");
         }
@@ -126,8 +131,8 @@ impl SessionManager {
         let conv_ids: Vec<String> = self.sessions.keys().cloned().collect();
         for conv_id in conv_ids {
             if let Some(session) = self.sessions.remove(&conv_id) {
-                if let Some(sid) = session.session_id {
-                    self.end_akw_session(&sid).await;
+                if session.group_id.is_some() {
+                    self.end_akw_session().await;
                 }
             }
         }
@@ -144,7 +149,7 @@ impl SessionManager {
 
     /// Check if AKW MCP tools are available.
     fn has_akw(&self) -> bool {
-        self.registry.has("mcp_akw__session_start")
+        self.registry.has("mcp_akw__group_start")
     }
 
     async fn start_akw_session(
@@ -156,29 +161,30 @@ impl SessionManager {
             return (None, Vec::new());
         }
 
-        let mut args = json!({
-            "agent": self.agent_name,
-            "type": channel_type,
-            "metadata": {
-                "conv_id": conv_id,
-                "channel": channel_type,
-            }
+        // group_start args: agent + metadata. project_id moves into metadata
+        // (no longer a top-level field).
+        let mut metadata = json!({
+            "conv_id": conv_id,
+            "channel": channel_type,
         });
-
         if let Some(pid) = &self.project_id {
-            args["project_id"] = json!(pid);
+            metadata["project_id"] = json!(pid);
         }
+
+        let args = json!({
+            "agent": self.agent_name,
+            "metadata": metadata,
+        });
 
         let result = self
             .registry
-            .execute("mcp_akw__session_start", args)
+            .execute("mcp_akw__group_start", args)
             .await;
 
-        // Parse response for session_id and recommended_context
+        // Parse response for group_id and recommended_context
         if let Ok(json) = serde_json::from_str::<Value>(&result) {
-            let session_id = json
-                .get("session")
-                .and_then(|s| s.get("id"))
+            let group_id = json
+                .get("group_id")
                 .and_then(|id| id.as_str())
                 .map(String::from);
 
@@ -196,31 +202,29 @@ impl SessionManager {
                 })
                 .unwrap_or_default();
 
-            if let Some(ref sid) = session_id {
-                info!(session_id = %sid, conv_id = %conv_id, "AKW session started");
+            if let Some(ref gid) = group_id {
+                info!(group_id = %gid, conv_id = %conv_id, "AKW group started");
             }
 
-            (session_id, context)
+            (group_id, context)
         } else {
-            warn!(conv_id = %conv_id, "failed to parse AKW session_start response");
+            warn!(conv_id = %conv_id, "failed to parse AKW group_start response");
             (None, Vec::new())
         }
     }
 
-    async fn end_akw_session(&self, session_id: &str) {
+    async fn end_akw_session(&self) {
         if !self.has_akw() {
             return;
         }
 
+        // group_end takes no args — closes the active segment for the active group.
         let _ = self
             .registry
-            .execute(
-                "mcp_akw__session_end",
-                json!({"session_id": session_id}),
-            )
+            .execute("mcp_akw__group_end", json!({}))
             .await;
 
-        debug!(session_id = %session_id, "AKW session ended");
+        debug!("AKW group segment ended");
     }
 }
 
@@ -293,7 +297,7 @@ mod tests {
     #[test]
     fn test_has_akw_true() {
         let mut reg = ToolRegistry::new();
-        reg.register("mcp_akw__session_start", "Start", json!({}), |_| async {
+        reg.register("mcp_akw__group_start", "Start", json!({}), |_| async {
             "ok".into()
         });
         let mgr = SessionManager::new("ino", None, 30, Arc::new(reg));

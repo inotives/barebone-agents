@@ -515,7 +515,7 @@ async fn run(
 ### 6.2 Full Message Flow
 
 ```
-1.  _ensure_akw_session(conv_id, channel_type, task_key, mission_key)
+1.  _ensure_akw_group(conv_id, channel_type, task_key, mission_key)
 2.  Generate turn_id = "turn-{uuid[:8]}"
 3.  Load history (last 20 is_final=1 messages)
 4.  Save user message (is_final=1)
@@ -523,7 +523,7 @@ async fn run(
       a. Base = AGENT.md content
       b. += Global skills (always)
       c. += Matched skills (keyword match against agent's equipped pool)
-      d. += AKW knowledge context (cached from session_start)
+      d. += AKW knowledge context (recommended_context from group_start)
       e. += Parent conversation context (if chained, last 5 messages)
       f. += Cross-agent @mention context (recent tasks + messages)
 6.  Truncate history to fit context window (chars/4 heuristic)
@@ -538,19 +538,19 @@ async fn run(
       d. Call LLM again
       e. Increment iteration
 9.  Save final assistant response (is_final=1) with token usage
-10. Log turn to AKW session (request[:500], response[:500])
-11. If channel_type == "task": End task session
+10. Log turn to AKW group (request[:500], response[:500])
+11. If channel_type == "task": End task group segment
 12. Return response content
 ```
 
-### 6.3 Two-Slot AKW Session Design
+### 6.3 Two-Slot AKW Group Design
 
-Two independent session slots prevent task sessions from fragmenting conversations:
+Two independent group slots prevent task groups from fragmenting conversations:
 
 ```rust
 struct SessionSlot {
-    session_id: Option<String>,     // AKW session ID (None if fallback)
-    conv_id: Option<String>,        // Conversation ID when session started
+    group_id: Option<String>,       // AKW group ID (None if fallback)
+    conv_id: Option<String>,        // Conversation ID when group started
     context: Vec<String>,           // Recommended context from AKW
     fallback_path: Option<PathBuf>, // Local .md file path
     turn_count: u32,                // For fallback numbering
@@ -562,20 +562,22 @@ struct SessionSlot {
 
 **Slot selection**: `channel_type == "task" → task_session`, otherwise `conv_session`
 
-**Session rotation**: When `conversation_id` changes from `slot.conv_id`, close old session and start new one.
+**Group rotation**: When `conversation_id` changes from `slot.conv_id`, close old group segment and start new one.
 
-### 6.4 AKW Session Lifecycle
+### 6.4 AKW Group Lifecycle
 
-1. **Start**: Try `mcp_loader.call_tool("akw", "session_start", metadata)`
-   - On success: Store session_id, cache recommended_context
+AKW persistence is keyed on a "group" — one logical unit of work — with multiple segments over time. We map our conversations onto groups.
+
+1. **Start**: `mcp_akw__group_start({agent, metadata: {conv_id, channel, project_id}})`
+   - On success: Store `group_id`, cache `recommended_context`
    - On failure: Create local markdown fallback file
-2. **Log turns**: After each run, call `session_log` (or append to local file)
-3. **End**: On conversation change or shutdown, call `session_end` (or finalize local file)
+2. **Log turns**: After each run, call `mcp_akw__group_log({request, response})` — keys onto the active group internally
+3. **End**: On conversation change or shutdown, call `mcp_akw__group_end({})` — closes the active segment
 
 **Fallback file format**:
 ```markdown
 ---
-session_type: conversation
+group_type: conversation
 agent: ino
 channel: cli
 conv_id: cli-ino-abc12345
@@ -593,7 +595,7 @@ Appended to system prompt in order:
 
 1. **Global skills** — always included (3 skills, ~2450 tokens total)
 2. **Dynamic skills** — keyword-matched from agent's equipped pool within token budget
-3. **AKW knowledge** — from `session_start()` recommended_context (cached per session)
+3. **AKW knowledge** — `recommended_context` from `group_start()` (cached per group)
 4. **Parent conversation** — last 5 messages from parent conv (if chained)
 5. **Cross-agent @mentions** — recent tasks + messages from mentioned agents
 

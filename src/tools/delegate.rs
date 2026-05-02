@@ -1,6 +1,7 @@
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 
@@ -191,11 +192,10 @@ pub fn build_restricted_registry(
     for def in parent.get_all() {
         let name = &def.name;
 
-        // Never allow blocked tools
-        if BLOCKED_TOOLS.iter().any(|b| *b == name)
-            || name.starts_with("mcp_") && name.contains("memory")
-            || name.starts_with("mcp_") && name.contains("knowledge")
-        {
+        // Never allow blocked tools. AKW tools (memory_*, skill_*, agent_*, group_*,
+        // project_*, maintain_*) are off-limits to sub-agents by default — match on
+        // the prefix so the rule covers every current and future AKW tool name.
+        if BLOCKED_TOOLS.iter().any(|b| *b == name) || name.starts_with("mcp_akw__") {
             continue;
         }
 
@@ -213,12 +213,95 @@ pub fn build_restricted_registry(
     restricted
 }
 
-/// Load a role profile from `agents/_roles/{role}.md`.
-/// Returns the file content as the system prompt.
-pub fn load_role_profile(root_dir: &Path, role: &str) -> Result<String, String> {
+/// Process-lifetime cache for role profiles resolved via AKW.
+/// Local-file lookups are intentionally never cached so dev edits to
+/// `agents/_roles/*.md` take effect without a process restart.
+static AKW_ROLE_CACHE: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Resolve a role profile to a system prompt string.
+///
+/// Resolution order:
+/// 1. Local — `agents/_roles/{role}.md` (curated by the team; deterministic; offline-safe).
+/// 2. AKW — `mcp_akw__agent_search(query=role)` → top result → `mcp_akw__agent_get` → `content`
+///    (long-tail fallback for roles not yet authored locally).
+/// 3. Default — `default_role_prompt()`.
+///
+/// Never errors — folds the fallback chain internally. Successful AKW resolutions
+/// are cached for the lifetime of the process; local file reads are intentionally
+/// uncached so dev edits to `agents/_roles/*.md` take effect immediately.
+pub async fn load_role_profile(
+    root_dir: &Path,
+    role: &str,
+    registry: &ToolRegistry,
+) -> String {
+    // 1. Local file (primary)
     let path = root_dir.join("agents").join("_roles").join(format!("{}.md", role));
-    std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to load role '{}': {}", role, e))
+    if let Ok(content) = std::fs::read_to_string(&path) {
+        debug!(role = %role, path = %path.display(), "role resolved from local file");
+        return content;
+    }
+
+    // 2. AKW cache hit
+    if let Some(cached) = AKW_ROLE_CACHE.lock().ok().and_then(|c| c.get(role).cloned()) {
+        debug!(role = %role, "role resolved from AKW cache");
+        return cached;
+    }
+
+    // 3. AKW lookup
+    if registry.has("mcp_akw__agent_search") && registry.has("mcp_akw__agent_get") {
+        if let Some(content) = resolve_role_via_akw(role, registry).await {
+            if let Ok(mut cache) = AKW_ROLE_CACHE.lock() {
+                cache.insert(role.to_string(), content.clone());
+            }
+            debug!(role = %role, "role resolved from AKW");
+            return content;
+        }
+    }
+
+    // 4. Default prompt
+    debug!(role = %role, "role resolved to default prompt");
+    default_role_prompt()
+}
+
+async fn resolve_role_via_akw(role: &str, registry: &ToolRegistry) -> Option<String> {
+    let search_result = registry
+        .execute("mcp_akw__agent_search", json!({"query": role}))
+        .await;
+
+    let json: Value = match serde_json::from_str(&search_result) {
+        Ok(v) => v,
+        Err(e) => {
+            debug!(role = %role, error = %e, "agent_search response not JSON");
+            return None;
+        }
+    };
+
+    // Accept the same response shapes fetch_akw_skills handles:
+    // {"result": [...]}, [...], or a single object with a path.
+    let items: Vec<Value> = if let Some(arr) = json.get("result").and_then(|r| r.as_array()) {
+        arr.clone()
+    } else if let Some(arr) = json.as_array() {
+        arr.clone()
+    } else if json.get("path").is_some() {
+        vec![json]
+    } else {
+        return None;
+    };
+
+    let agent_path = items
+        .first()?
+        .get("path")
+        .and_then(|p| p.as_str())
+        .map(String::from)?;
+
+    let get_result = registry
+        .execute("mcp_akw__agent_get", json!({"agent_path": agent_path}))
+        .await;
+
+    serde_json::from_str::<Value>(&get_result)
+        .ok()
+        .and_then(|j| j.get("content").and_then(|c| c.as_str()).map(String::from))
 }
 
 /// Default system prompt when no role is specified.
@@ -362,12 +445,9 @@ async fn delegate_single(
         .and_then(|m| m.as_u64())
         .unwrap_or(5) as u32;
 
-    // Resolve role profile
+    // Resolve role profile (AKW → local file → default).
     let system_prompt = match args.get("role").and_then(|r| r.as_str()) {
-        Some(role) => load_role_profile(root_dir, role).unwrap_or_else(|e| {
-            warn!(error = %e, "falling back to default role");
-            default_role_prompt()
-        }),
+        Some(role) => load_role_profile(root_dir, role, parent_registry).await,
         None => default_role_prompt(),
     };
 
@@ -623,21 +703,27 @@ mod tests {
     }
 
     #[test]
-    fn test_build_restricted_blocks_mcp_memory() {
+    fn test_build_restricted_blocks_akw() {
         let mut parent = ToolRegistry::new();
         parent.register("mcp_akw__memory_search", "AKW", json!({}), |_| async { "ok".into() });
-        parent.register("mcp_akw__knowledge_get", "AKW", json!({}), |_| async { "ok".into() });
+        parent.register("mcp_akw__skill_search", "AKW", json!({}), |_| async { "ok".into() });
+        parent.register("mcp_akw__agent_get", "AKW", json!({}), |_| async { "ok".into() });
+        parent.register("mcp_akw__group_log", "AKW", json!({}), |_| async { "ok".into() });
         parent.register("mcp_github__create_issue", "GH", json!({}), |_| async { "ok".into() });
 
-        // Even if explicitly allowed, memory/knowledge MCP tools are blocked
+        // Even if explicitly allowed, every AKW tool (mcp_akw__*) is blocked.
         let allowed = vec![
             "mcp_akw__memory_search".to_string(),
-            "mcp_akw__knowledge_get".to_string(),
+            "mcp_akw__skill_search".to_string(),
+            "mcp_akw__agent_get".to_string(),
+            "mcp_akw__group_log".to_string(),
             "mcp_github__create_issue".to_string(),
         ];
         let restricted = build_restricted_registry(&parent, Some(&allowed));
         assert!(!restricted.has("mcp_akw__memory_search"));
-        assert!(!restricted.has("mcp_akw__knowledge_get"));
+        assert!(!restricted.has("mcp_akw__skill_search"));
+        assert!(!restricted.has("mcp_akw__agent_get"));
+        assert!(!restricted.has("mcp_akw__group_log"));
         assert!(restricted.has("mcp_github__create_issue"));
     }
 
@@ -648,20 +734,135 @@ mod tests {
         assert!(prompt.contains("task"));
     }
 
-    #[test]
-    fn test_load_role_profile_missing() {
-        let result = load_role_profile(Path::new("/nonexistent"), "coder");
-        assert!(result.is_err());
+    #[tokio::test]
+    async fn test_load_role_profile_missing_falls_back_to_default() {
+        // No AKW tools, no local file → default prompt.
+        let registry = ToolRegistry::new();
+        let unique_role = format!("nonexistent-{}", uuid::Uuid::new_v4());
+        let content = load_role_profile(Path::new("/nonexistent"), &unique_role, &registry).await;
+        assert!(content.contains("sub-agent"));
     }
 
-    #[test]
-    fn test_load_role_profile() {
+    #[tokio::test]
+    async fn test_load_role_profile_local_file() {
         let dir = tempfile::TempDir::new().unwrap();
         let roles_dir = dir.path().join("agents").join("_roles");
         std::fs::create_dir_all(&roles_dir).unwrap();
-        std::fs::write(roles_dir.join("researcher.md"), "You are a researcher.").unwrap();
+        let unique_role = format!("local-{}", uuid::Uuid::new_v4());
+        std::fs::write(
+            roles_dir.join(format!("{}.md", unique_role)),
+            "You are a researcher.",
+        )
+        .unwrap();
 
-        let content = load_role_profile(dir.path(), "researcher").unwrap();
+        let registry = ToolRegistry::new();
+        let content = load_role_profile(dir.path(), &unique_role, &registry).await;
         assert_eq!(content, "You are a researcher.");
+    }
+
+    #[tokio::test]
+    async fn test_load_role_profile_local_preferred_over_akw() {
+        // Both local file and AKW exist — local wins (curated team taxonomy first).
+        let dir = tempfile::TempDir::new().unwrap();
+        let roles_dir = dir.path().join("agents").join("_roles");
+        std::fs::create_dir_all(&roles_dir).unwrap();
+        let unique_role = format!("localwins-{}", uuid::Uuid::new_v4());
+        std::fs::write(
+            roles_dir.join(format!("{}.md", unique_role)),
+            "Local copy wins.",
+        )
+        .unwrap();
+
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            "mcp_akw__agent_search",
+            "search",
+            json!({}),
+            |_| async {
+                json!({
+                    "result": [{"path": "3_intelligences/agents/engineering/researcher.md"}]
+                })
+                .to_string()
+            },
+        );
+        registry.register(
+            "mcp_akw__agent_get",
+            "get",
+            json!({}),
+            |_| async { json!({"content": "AKW persona body."}).to_string() },
+        );
+
+        let content = load_role_profile(dir.path(), &unique_role, &registry).await;
+        assert_eq!(content, "Local copy wins.");
+    }
+
+    #[tokio::test]
+    async fn test_load_role_profile_akw_when_local_missing() {
+        // No local file → fall through to AKW.
+        let dir = tempfile::TempDir::new().unwrap();
+        let unique_role = format!("akwfallback-{}", uuid::Uuid::new_v4());
+
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            "mcp_akw__agent_search",
+            "search",
+            json!({}),
+            |_| async {
+                json!({
+                    "result": [{"path": "3_intelligences/agents/product/trend_researcher.md"}]
+                })
+                .to_string()
+            },
+        );
+        registry.register(
+            "mcp_akw__agent_get",
+            "get",
+            json!({}),
+            |_| async { json!({"content": "Trend researcher persona."}).to_string() },
+        );
+
+        let content = load_role_profile(dir.path(), &unique_role, &registry).await;
+        assert_eq!(content, "Trend researcher persona.");
+    }
+
+    #[tokio::test]
+    async fn test_load_role_profile_akw_cache() {
+        // Second call hits the cache and does NOT re-invoke agent_search.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static SEARCH_CALLS: AtomicUsize = AtomicUsize::new(0);
+        static GET_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+        let unique_role = format!("cached-{}", uuid::Uuid::new_v4());
+
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            "mcp_akw__agent_search",
+            "search",
+            json!({}),
+            |_| async {
+                SEARCH_CALLS.fetch_add(1, Ordering::SeqCst);
+                json!({
+                    "result": [{"path": "3_intelligences/agents/engineering/foo.md"}]
+                })
+                .to_string()
+            },
+        );
+        registry.register(
+            "mcp_akw__agent_get",
+            "get",
+            json!({}),
+            |_| async {
+                GET_CALLS.fetch_add(1, Ordering::SeqCst);
+                json!({"content": "Cached body."}).to_string()
+            },
+        );
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let _ = load_role_profile(dir.path(), &unique_role, &registry).await;
+        let _ = load_role_profile(dir.path(), &unique_role, &registry).await;
+        let _ = load_role_profile(dir.path(), &unique_role, &registry).await;
+
+        assert_eq!(SEARCH_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(GET_CALLS.load(Ordering::SeqCst), 1);
     }
 }
