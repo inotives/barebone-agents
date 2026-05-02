@@ -1,12 +1,13 @@
 use regex::Regex;
 use serde_json::Value;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::config::ModelConfig;
 use crate::db::Database;
 use crate::llm::{truncate_history, LLMClientPool, LLMMessage};
-use crate::skills::CoreSkills;
+use crate::skills::{self, CoreSkills};
 use crate::tools::ToolRegistry;
 
 pub struct AgentLoop {
@@ -22,6 +23,9 @@ pub struct AgentLoop {
     history_limit: u32,
     core_skills: CoreSkills,
     akw_skills_enabled: bool,
+    equipped_skills_pool_dir: PathBuf,
+    equipped_skills_token_budget: u32,
+    equipped_skills_min_match_hits: u32,
 }
 
 impl AgentLoop {
@@ -38,6 +42,9 @@ impl AgentLoop {
         history_limit: u32,
         core_skills: CoreSkills,
         akw_skills_enabled: bool,
+        equipped_skills_pool_dir: PathBuf,
+        equipped_skills_token_budget: u32,
+        equipped_skills_min_match_hits: u32,
     ) -> Self {
         Self {
             agent_name,
@@ -52,6 +59,9 @@ impl AgentLoop {
             history_limit,
             core_skills,
             akw_skills_enabled,
+            equipped_skills_pool_dir,
+            equipped_skills_token_budget,
+            equipped_skills_min_match_hits,
         }
     }
 
@@ -96,11 +106,11 @@ impl AgentLoop {
             warn!(error = %e, "failed to save user message");
         }
 
-        // Fetch AKW skills based on the task/message (if enabled)
-        let akw_skills = self.fetch_akw_skills(message).await;
+        // Pick task-relevant skills: local pool first, AKW only if local returns nothing.
+        let dynamic_skills = self.fetch_dynamic_skills(message).await;
 
         // Build system prompt
-        let system = self.build_system_prompt(message, conversation_id, parent_id, &akw_skills);
+        let system = self.build_system_prompt(message, conversation_id, parent_id, &dynamic_skills);
 
         // Convert history to LLM messages
         let mut messages: Vec<LLMMessage> = history
@@ -323,21 +333,22 @@ impl AgentLoop {
         message: &str,
         conversation_id: &str,
         parent_id: Option<&str>,
-        akw_skills: &str,
+        dynamic_skills: &str,
     ) -> String {
         let mut prompt = self.character_sheet.clone();
 
-        // Core skills (from config/skills/*.md)
+        // Core skills (from config/skills/*.md) — always injected.
         let skills_section = self.core_skills.format_for_prompt();
         if !skills_section.is_empty() {
             prompt.push_str("\n\n");
             prompt.push_str(&skills_section);
         }
 
-        // AKW skills (from agent-knowledge MCP, fetched per-task)
-        if !akw_skills.is_empty() {
-            prompt.push_str("\n\n## AKW Skills\n\n");
-            prompt.push_str(akw_skills);
+        // Dynamic skills: either "## Equipped Skills" (from local pool) or
+        // "## AKW Skills" (AKW fallback). The header is included by the formatter.
+        if !dynamic_skills.is_empty() {
+            prompt.push_str("\n\n");
+            prompt.push_str(dynamic_skills);
         }
 
         // Cross-agent @mention context
@@ -368,8 +379,41 @@ impl AgentLoop {
         prompt
     }
 
-    /// Fetch relevant skills from AKW MCP based on the task/message content.
-    /// Returns empty string if disabled or AKW unavailable.
+    /// Pick task-relevant skills for system-prompt injection.
+    ///
+    /// Resolution order:
+    /// 1. Local `agents/_skills/*.md` pool — keyword + body match against the message,
+    ///    filtered by `min_match_hits`, packed into `token_budget`. Returns formatted
+    ///    `## Equipped Skills` block on success.
+    /// 2. AKW `skill_search` fallback — only if the local pool returned no matches.
+    ///    Returns formatted `## AKW Skills` block on success.
+    ///
+    /// Returns empty string when neither resolves.
+    async fn fetch_dynamic_skills(&self, message: &str) -> String {
+        // 1. Local pool first
+        let pool = skills::load_equipped_pool(&self.equipped_skills_pool_dir);
+        if !pool.is_empty() {
+            let chosen = skills::select_equipped_skills(
+                &pool,
+                message,
+                self.equipped_skills_min_match_hits,
+                self.equipped_skills_token_budget,
+            );
+            if !chosen.is_empty() {
+                debug!(
+                    agent = %self.agent_name,
+                    count = chosen.len(),
+                    slugs = ?chosen.iter().map(|s| s.slug.as_str()).collect::<Vec<_>>(),
+                    "equipped skills picked from local pool"
+                );
+                return skills::format_equipped_skills(&chosen);
+            }
+        }
+
+        // 2. AKW fallback
+        self.fetch_akw_skills(message).await
+    }
+
     async fn fetch_akw_skills(&self, message: &str) -> String {
         if !self.akw_skills_enabled || !self.registry.has("mcp_akw__skill_search") {
             return String::new();
@@ -456,7 +500,11 @@ impl AgentLoop {
             "AKW skills loaded for task"
         );
 
-        skills.join("\n\n---\n\n")
+        if skills.is_empty() {
+            String::new()
+        } else {
+            format!("## AKW Skills\n\n{}", skills.join("\n\n---\n\n"))
+        }
     }
 
     fn build_mention_context(&self, message: &str) -> String {
@@ -572,6 +620,9 @@ mod tests {
             20,
             CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
             false,
+            PathBuf::from("/nonexistent/_skills"),
+            4000,
+            2,
         );
 
         let context = loop_.build_mention_context("Hey @robin, what's the status?");
@@ -609,6 +660,9 @@ mod tests {
             20,
             CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
             false,
+            PathBuf::from("/nonexistent/_skills"),
+            4000,
+            2,
         );
 
         let context = loop_.build_mention_context("@ino do something");
@@ -645,6 +699,9 @@ mod tests {
             20,
             CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
             false,
+            PathBuf::from("/nonexistent/_skills"),
+            4000,
+            2,
         );
 
         let context = loop_.build_mention_context("@unknown_agent hello");
@@ -684,6 +741,9 @@ mod tests {
             20,
             CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
             false,
+            PathBuf::from("/nonexistent/_skills"),
+            4000,
+            2,
         );
 
         let context = loop_.build_parent_context("parent-conv");
@@ -722,6 +782,9 @@ mod tests {
             20,
             CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
             false,
+            PathBuf::from("/nonexistent/_skills"),
+            4000,
+            2,
         );
 
         let context = loop_.build_parent_context("nonexistent-conv");

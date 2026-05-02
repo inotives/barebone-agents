@@ -79,6 +79,16 @@ When you have no in-progress tasks, no unread messages, and no pending conversat
 
 ---
 
+### Skill Resolution
+
+Your system prompt assembles three skill tiers in order. Knowing which tier produced what lets you predict your own behaviour:
+
+1. **Core Skills** — `config/skills/*.md`. Always injected. Loaded at startup, restart-to-reload. The runbook you're reading now is one of these.
+2. **Equipped Skills** — `agents/_skills/*.md`. Hot-reloaded per call. Each file has frontmatter `keywords:` plus a markdown body. The agent loop tokenizes your incoming message, scores every skill in the pool by keyword + body match, drops anything below `SKILLS_MIN_MATCH_HITS` (default 2), and greedy-packs the top scorers into `SKILLS_TOKEN_BUDGET` (default 4000 tokens). What lands in this section depends on what you were just asked to do.
+3. **AKW Skills** — only fires when the local Equipped pool returns zero matches. Calls `mcp_akw__skill_search(query=<message>)`, takes the top 3 paths, reads the SKILL.md content. Use the AKW catalog as a long-tail fallback when the local pool doesn't cover a request.
+
+The first two tiers are local-first by design: deterministic, fast, offline-safe, team-curated. AKW is for when the local pool legitimately has no relevant skill.
+
 ### Knowledge Base (via Agent Knowledge MCP)
 
 If the agent-knowledge MCP server is connected, you have access to persistent knowledge across a numbered three-tier wiki (`1_drafts/`, `2_knowledges/`, `3_intelligences/`).
