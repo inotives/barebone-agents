@@ -65,6 +65,16 @@ pub enum Commands {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    /// Pull/search/list skills (local pool ↔ AKW)
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommand,
+    },
+    /// Pull/search/list roles (local pool ↔ AKW)
+    Role {
+        #[command(subcommand)]
+        command: RoleCommand,
+    },
     /// View token usage breakdown
     Tokens {
         /// Filter by agent name
@@ -272,4 +282,60 @@ pub enum ConfigCommand {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+}
+
+#[derive(Subcommand)]
+pub enum SkillCommand {
+    /// Search AKW for skills matching a query (top 5)
+    Search {
+        /// Search query
+        query: String,
+        /// Pick the AKW MCP config from this agent's agent.yml (defaults to scan)
+        #[arg(long)]
+        agent: Option<String>,
+    },
+    /// Pull a skill from AKW into agents/_skills/<slug>.md
+    Pull {
+        /// AKW slug or memory path
+        slug: String,
+        /// Overwrite an existing local file
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        /// Write under a different slug (resolves cross-domain collisions)
+        #[arg(long)]
+        rename: Option<String>,
+        /// Pick the AKW MCP config from this agent's agent.yml
+        #[arg(long)]
+        agent: Option<String>,
+    },
+    /// List skills in the local pool (agents/_skills/)
+    List,
+}
+
+#[derive(Subcommand)]
+pub enum RoleCommand {
+    /// Search AKW for roles (agents) matching a query (top 5)
+    Search {
+        /// Search query
+        query: String,
+        /// Pick the AKW MCP config from this agent's agent.yml (defaults to scan)
+        #[arg(long)]
+        agent: Option<String>,
+    },
+    /// Pull a role from AKW into agents/_roles/<slug>.md
+    Pull {
+        /// AKW slug or memory path
+        slug: String,
+        /// Overwrite an existing local file
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        /// Write under a different slug
+        #[arg(long)]
+        rename: Option<String>,
+        /// Pick the AKW MCP config from this agent's agent.yml
+        #[arg(long)]
+        agent: Option<String>,
+    },
+    /// List roles in the local pool (agents/_roles/)
+    List,
 }

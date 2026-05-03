@@ -5,6 +5,7 @@ mod cmd_agents;
 mod cmd_config;
 mod cmd_conversations;
 mod cmd_missions;
+mod cmd_pull;
 mod cmd_tasks;
 mod cmd_tokens;
 mod config;
@@ -93,6 +94,24 @@ async fn main() {
                 .unwrap();
             if let Err(e) = cmd_config::run(&root_dir, command) {
                 error!(error = %e, "config error");
+                std::process::exit(1);
+            }
+        }
+        Commands::Skill { command } => {
+            let root_dir = std::env::current_dir()
+                .map_err(|e| format!("Failed to get cwd: {}", e))
+                .unwrap();
+            if let Err(e) = cmd_pull::run_skill(&root_dir, command).await {
+                error!(error = %e, "skill error");
+                std::process::exit(1);
+            }
+        }
+        Commands::Role { command } => {
+            let root_dir = std::env::current_dir()
+                .map_err(|e| format!("Failed to get cwd: {}", e))
+                .unwrap();
+            if let Err(e) = cmd_pull::run_role(&root_dir, command).await {
+                error!(error = %e, "role error");
                 std::process::exit(1);
             }
         }

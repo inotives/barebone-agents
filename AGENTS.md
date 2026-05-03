@@ -172,3 +172,22 @@ Custom skills available in `.agents/commands/`:
 | `/file-size-check` | Scan for files over 800 lines with refactor suggestions |
 | `/create-ep <topic>` | Create a new execution plan in `docs/` |
 | `/archive-ep` | Move completed (DONE) EPs to `docs/archived/` |
+
+## CLI Commands
+
+The `barebone-agent` binary exposes these subcommands (run from the repo root):
+
+| Command | Description |
+|---|---|
+| `run --agent <name>` / `--all` | Run agent(s); `-m "<msg>"` for one-shot |
+| `status [--agent X] [--section ...]` | Agent dashboard |
+| `tasks {list,show,create,update,delete}` | Manage tasks |
+| `missions {list,show,create,update,delete}` | Manage missions |
+| `conversations {list,show}` | View conversation history |
+| `agents {list,show}` | View agent configurations |
+| `tokens [--by-model] [--by-day]` | Token usage breakdown |
+| `config validate` | Validate configuration files |
+| `skill {search,pull,list}` | Pull AKW skills into `agents/_skills/` |
+| `role {search,pull,list}` | Pull AKW personas into `agents/_roles/` |
+
+Pull verbs accept `--agent <name>` (pick the AKW MCP config from a specific `agent.yml`), `--force` (overwrite an existing local file), and `--rename <slug>` (write under a different filename).

@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -10,6 +10,8 @@ use tracing::{debug, error, info, warn};
 use crate::config::McpServerConfig;
 use super::registry::ToolRegistry;
 
+const STDERR_TAIL_LINES: usize = 20;
+
 /// A connection to a single MCP server via stdio.
 pub struct McpConnection {
     name: String,
@@ -17,6 +19,7 @@ pub struct McpConnection {
     stdin: Arc<Mutex<tokio::process::ChildStdin>>,
     stdout: Arc<Mutex<BufReader<tokio::process::ChildStdout>>>,
     request_id: Arc<Mutex<u64>>,
+    stderr_buffer: Arc<Mutex<VecDeque<String>>>,
 }
 
 impl McpConnection {
@@ -30,7 +33,7 @@ impl McpConnection {
             .envs(resolved_env)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
 
         let mut child = cmd
             .spawn()
@@ -44,6 +47,14 @@ impl McpConnection {
             .stdout
             .take()
             .ok_or_else(|| format!("No stdout for MCP server '{}'", config.name))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| format!("No stderr for MCP server '{}'", config.name))?;
+
+        let stderr_buffer: Arc<Mutex<VecDeque<String>>> =
+            Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_TAIL_LINES)));
+        spawn_stderr_drain(stderr, stderr_buffer.clone());
 
         let conn = Self {
             name: config.name.clone(),
@@ -51,13 +62,33 @@ impl McpConnection {
             stdin: Arc::new(Mutex::new(stdin)),
             stdout: Arc::new(Mutex::new(BufReader::new(stdout))),
             request_id: Arc::new(Mutex::new(0)),
+            stderr_buffer,
         };
 
-        // Initialize the MCP session
-        conn.initialize().await?;
+        // Initialize the MCP session — on failure, surface stderr tail.
+        if let Err(e) = conn.initialize().await {
+            // Give the drain task a tick to flush whatever the server printed.
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let tail = conn.stderr_tail().await;
+            let msg = if tail.is_empty() {
+                format!("Failed to initialize MCP server '{}': {}", config.name, e)
+            } else {
+                format!(
+                    "Failed to initialize MCP server '{}': {}\n--- stderr (last {} lines) ---\n{}",
+                    config.name, e, STDERR_TAIL_LINES, tail
+                )
+            };
+            return Err(msg);
+        }
 
         info!(server = %config.name, "MCP server connected");
         Ok(conn)
+    }
+
+    /// Return the tail of captured stderr (up to STDERR_TAIL_LINES lines, joined by `\n`).
+    pub async fn stderr_tail(&self) -> String {
+        let buf = self.stderr_buffer.lock().await;
+        buf.iter().cloned().collect::<Vec<_>>().join("\n")
     }
 
     /// Send a JSON-RPC request and read the response.
@@ -391,6 +422,31 @@ async fn mcp_tool_call(
             return Ok(content);
         }
     }
+}
+
+fn spawn_stderr_drain(
+    stderr: tokio::process::ChildStderr,
+    buffer: Arc<Mutex<VecDeque<String>>>,
+) {
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stderr);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    let trimmed = line.trim_end_matches(['\n', '\r']).to_string();
+                    let mut buf = buffer.lock().await;
+                    if buf.len() == STDERR_TAIL_LINES {
+                        buf.pop_front();
+                    }
+                    buf.push_back(trimmed);
+                }
+                Err(_) => break,
+            }
+        }
+    });
 }
 
 #[cfg(test)]
