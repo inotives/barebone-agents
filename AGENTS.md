@@ -26,26 +26,45 @@ barebone-agents/
 ├── agents/
 │   ├── _roles/                       # Sub-agent persona templates (delegate role:)
 │   ├── _skills/                      # Local task-matched skill pool (hot-reload)
+│   ├── _preferences/                 # Local user-preference pool (EP-00015)
 │   └── ino/                          # Default agent
 │       ├── AGENT.md                  # Identity + persona
 │       ├── agent.yml                 # Model + channel config
 │       └── .env                      # Agent-specific credentials
 │
 ├── data/                             # Runtime data (gitignored)
-│   └── barebone-agent.db            # SQLite database
+│   ├── barebone-agent.db             # SQLite (conversations, tasks, reflection_counters)
+│   ├── .akw_push_manifest.json       # EP-00015 pusher state (sha256 + last_pushed_at)
+│   └── drafts/                       # Local-first artifact storage (EP-00015)
+│       ├── 2_researches/             #   research drafts (opt-in via persist_as_draft)
+│       ├── 2_knowledges/preferences/ #   pending preferences (reflection-generated)
+│       ├── sessions/                 #   conversation summaries
+│       └── notes/                    #   ad-hoc notes (forward-compatible)
 │
 ├── src/
-│   ├── main.rs                       # Entry point + startup wiring
+│   ├── main.rs                       # Entry point + startup wiring + pusher spawn
 │   ├── cli.rs                        # CLI argument parsing (clap)
-│   ├── agent_loop.rs                 # Agent reasoning loop
+│   ├── agent_loop.rs                 # Agent reasoning loop + system prompt assembly
+│   ├── scheduler.rs                  # Heartbeat + task execution
+│   ├── session.rs                    # Per-conversation session manager (AKW group lifecycle)
+│   ├── preferences.rs                # Local pref pool reader + selector (EP-00015)
+│   ├── memory_context.rs             # Prior-work search + previous-run formatting (EP-00015)
+│   ├── draft_writer.rs               # Research draft persistence (EP-00015)
+│   ├── session_draft.rs              # Session-summary draft producer (EP-00015)
+│   ├── reflection.rs                 # Counter-triggered pattern reflection (EP-00015)
+│   ├── triggers.rs                   # `save as preference` keyword trigger (EP-00015)
+│   ├── akw_pusher.rs                 # Generic local-first AKW backup pusher (EP-00015)
+│   ├── cmd_akw.rs                    # `akw push|status` CLI
+│   ├── cmd_prefs.rs                  # `prefs list|pull|promote` CLI
+│   ├── cmd_pull.rs                   # `skill pull` / `role pull` CLI (EP-00014)
 │   ├── config/                       # Config loading (env, models, agent, squad)
-│   ├── db/                           # SQLite layer (conversations, tasks, missions, schedule)
+│   ├── db/                           # SQLite layer (conversations, tasks, reflection_counters)
 │   ├── llm/                          # LLM clients (OpenAI-compat, Anthropic, Gemini, pool)
-│   ├── tools/                        # Tool registry + built-in tools + MCP client
-│   └── channels/                     # CLI channel
+│   ├── tools/                        # Tool registry + built-in tools + MCP client + AKW client
+│   └── channels/                     # CLI + Discord channels
 │
 ├── docs/
-│   ├── specs.md                      # Permanent project spec
+│   ├── SPECS.md                      # Permanent project spec
 │   ├── EP-XXXXX_*.md                 # Active execution plans
 │   └── archived/                     # Completed EPs
 │
@@ -189,5 +208,11 @@ The `barebone-agent` binary exposes these subcommands (run from the repo root):
 | `config validate` | Validate configuration files |
 | `skill {search,pull,list}` | Pull AKW skills into `agents/_skills/` |
 | `role {search,pull,list}` | Pull AKW personas into `agents/_roles/` |
+| `prefs {list,pull,promote}` | Manage the local preference pool (EP-00015) |
+| `akw {push,status}` | Run / inspect the local-first artifact pusher (EP-00015) |
 
 Pull verbs accept `--agent <name>` (pick the AKW MCP config from a specific `agent.yml`), `--force` (overwrite an existing local file), and `--rename <slug>` (write under a different filename).
+
+`prefs promote <slug>` moves a pending preference (`data/drafts/2_knowledges/preferences/`) into the active pool (`agents/_preferences/`) and best-effort deletes the corresponding draft from AKW (Q8 resolution — AKW v1 refuses agent draft deletes, so the orphan is accepted).
+
+`akw push` and `akw status` are also available as the same operation that runs automatically once an hour in the background when the agent is running with AKW configured.

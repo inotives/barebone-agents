@@ -107,6 +107,16 @@ DISCORD_BOT_TOKEN=
 EOF
 fi
 
+# ---------- runtime directories (EP-00015) ----------
+# The harness creates these on demand, but pre-creating keeps the layout
+# obvious and prevents the first push/draft write from hitting an unexpected
+# permission error if `data/` itself doesn't exist yet.
+log "scaffolding data/drafts/* (local-first artifact storage)…"
+mkdir -p data/drafts/2_researches
+mkdir -p data/drafts/2_knowledges/preferences
+mkdir -p data/drafts/sessions
+mkdir -p data/drafts/notes
+
 # ---------- AKW (optional) ----------
 if [[ "${WITH_AKW}" == "1" ]]; then
   log "AKW setup requested"
@@ -204,4 +214,15 @@ echo "       ./target/release/barebone-agent run --agent ino -m 'say hi in one w
 if [[ "${WITH_SYSTEMD}" == "1" ]]; then
   echo "  4. Start the service: ${BLD}systemctl --user enable --now barebone-agent-ino${RST}"
 fi
+echo
+echo "${BLD}Local-first memory & preferences (EP-00015):${RST}"
+echo "  - Drop preferences into ${BLD}agents/_preferences/<slug>.md${RST}; the agent will inject"
+echo "    matching ones into its system prompt on each task / first conversation turn."
+echo "    A starter template is at ${BLD}agents/_preferences/.template.md${RST}."
+echo "  - List the pool:    ${BLD}barebone-agent prefs list${RST}"
+echo "  - Pull from AKW:    ${BLD}barebone-agent prefs pull <slug>${RST}"
+echo "  - Promote pending:  ${BLD}barebone-agent prefs promote <slug>${RST}"
+echo "  - Inspect backups:  ${BLD}barebone-agent akw status${RST}"
+echo "  - Force a backup:   ${BLD}barebone-agent akw push${RST}"
+echo "    (the background pusher runs this automatically once an hour when AKW is configured)"
 echo
