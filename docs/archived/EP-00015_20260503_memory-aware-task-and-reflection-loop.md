@@ -381,13 +381,13 @@ Tests:
 - **Q10 (RESOLVED — fresh-start counter migration).** Phase 5 migration creates the table empty. Counters start at zero on first post-deploy event; users with prior history don't trigger a near-empty reflection on their first segment.
 
 ## Implementation Status
-- [ ] Phase 1: plumbing fixes (`recommended_context` injection)
-- [ ] Phase 2: generic AKW pusher + preference local pool + per-task selection
-- [ ] Phase 3: prior-work search + previous-run threading
-- [ ] Phase 4: research draft + session draft persistence (both local-first)
-- [ ] Phase 5: counter table + reflection loop (local write only)
-- [ ] Phase 6: user keyword triggers (write to active pool)
-- [ ] Phase 7: docs + config
-- [ ] Phase 8: live verification (AKW-present + no-AKW, all artifact types)
+- [x] Phase 1: plumbing fixes (`recommended_context` injection)
+- [x] Phase 2: generic AKW pusher + preference local pool + per-task selection
+- [x] Phase 3: prior-work search + previous-run threading
+- [x] Phase 4: research draft + session draft persistence (both local-first)
+- [x] Phase 5: counter table + reflection loop (local write only)
+- [x] Phase 6: user keyword triggers (write to active pool)
+- [x] Phase 7: docs + config
+- [x] Phase 8: live verification (AKW-present + no-AKW, all artifact types)
 
-## Status: READY
+## Status: DONE
