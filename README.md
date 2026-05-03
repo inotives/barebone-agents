@@ -128,23 +128,36 @@ mkdir -p data/drafts/{2_researches,2_knowledges/preferences,sessions,notes}
 ./target/release/barebone-agent config validate
 ```
 
-**6. Optional — agent-knowledge-wikia (AKW MCP server)**
+**6. Optional — agent-knowledge MCP server (advanced)**
 
-The harness boots fine without AKW; the EP-00015 features (preference selection, prior-work search, draft persistence) all work locally. Set up AKW only if you want durable AKW backup or cross-agent knowledge sharing.
+The harness boots fine without AKW. All EP-00015 hot-path features (preference selection, reflection, draft persistence) are local-only by design.
+
+Set up AKW only if you want one of:
+- Durable backup of your preferences + drafts to a wiki-style store.
+- Automatic prior-work recall in prompts (`memory_search` injects past research into the system prompt under `## Prior Work`).
+- Cross-machine / cross-agent preference sharing.
+
+The AKW repo URL isn't a public default — you provide it. Example flow:
 
 ```bash
 # Install uv (Python package manager AKW uses)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 
-# Clone AKW alongside this repo
+# Clone AKW alongside this repo (replace <repo-url> with your AKW source)
 cd ..
-git clone https://github.com/inotives/agent-knowledge-wikia.git
-cd agent-knowledge-wikia
+git clone <repo-url> agent-knowledge
+cd agent-knowledge
 uv sync
 
-# Update agents/ino/agent.yml — replace any hardcoded path with your AKW path
-# (the install.sh --with-akw flag does this automatically)
+# Edit agents/ino/agent.yml so the akw entry under mcp_servers points at the
+# absolute path of your local AKW checkout. The install.sh --with-akw flag
+# automates this; manually you'd just `sed` or hand-edit.
+```
+
+To enable later via the bootstrap script:
+```bash
+./install.sh --with-akw --akw-repo <repo-url>
 ```
 
 **7. Run**
