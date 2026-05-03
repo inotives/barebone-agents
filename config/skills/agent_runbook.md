@@ -94,9 +94,12 @@ The first two tiers are local-first by design: deterministic, fast, offline-safe
 If the agent-knowledge MCP server is connected, you have access to persistent knowledge across a numbered three-tier wiki (`1_drafts/`, `2_knowledges/`, `3_intelligences/`).
 
 **Knowledge / past context:**
-- **Search before acting:** `mcp_akw__memory_search(query="<topic>")` — check related notes, past decisions, session summaries
 - **Read a page:** `mcp_akw__memory_read(path="<path>")` — read full content
-- **Save findings:** `mcp_akw__memory_create(path="1_drafts/2_knowledges/<topic>.md", ...)` — write to drafts; the curator promotes to `2_knowledges/`
+- **Search:** `mcp_akw__memory_search(query="<topic>")` is available for ad-hoc lookup, but the harness now runs an automatic prior-work search at the start of each task / first conversation turn (results land under `## Prior Work` in your system prompt). Re-search only when that initial pass missed your need.
+
+**Saving findings (local-first, EP-00015):**
+- The harness owns session-summary drafts (`data/drafts/sessions/`) and research drafts for tasks flagged with `metadata.persist_as_draft: true` (`data/drafts/2_researches/`). Do **not** call `mcp_akw__memory_create` to save those — the harness writes them locally and the background pusher mirrors them to AKW.
+- For ad-hoc notes that don't fit those shapes, you can write to `data/drafts/notes/<slug>.md` (which the pusher also mirrors) instead of calling `mcp_akw__memory_create` directly.
 
 **Skills (capabilities):**
 - **Find a skill:** `mcp_akw__skill_search(query="<topic>" [, domain="engineering"])` — ranked SKILL.md bundles. Use this when equipping a capability ("how do I X?")

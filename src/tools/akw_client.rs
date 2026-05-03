@@ -259,6 +259,120 @@ impl AkwClient {
         parse_doc(&raw, &path, tool)
     }
 
+    /// Create a new memory page at `path` with `content` (full markdown).
+    ///
+    /// Used by the EP-00015 generic pusher (`akw_pusher.rs`) for files with
+    /// no manifest entry. AKW's `memory_create` rejects existing paths — the
+    /// caller (pusher) handles "path exists" by retrying with `memory_update`.
+    /// AKW also requires a `title` field; we derive one from the path's stem
+    /// when the caller doesn't provide one explicitly.
+    pub async fn memory_create(&self, path: &str, content: &str) -> Result<(), AkwError> {
+        let tool = "memory_create";
+        // Derive a title from the path's filename stem.
+        let title = std::path::Path::new(path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(path);
+        let raw = self
+            .conn
+            .call_tool(
+                tool,
+                json!({ "path": path, "title": title, "content": content }),
+            )
+            .await
+            .map_err(|e| AkwError::Call {
+                tool: tool.to_string(),
+                message: e,
+            })?;
+        check_tool_error(&raw, tool)
+    }
+
+    /// Update an existing memory page at `path`.
+    ///
+    /// Used by the EP-00015 pusher when the manifest indicates a prior push
+    /// at this path with a different hash.
+    pub async fn memory_update(&self, path: &str, content: &str) -> Result<(), AkwError> {
+        let tool = "memory_update";
+        let raw = self
+            .conn
+            .call_tool(tool, json!({ "path": path, "content": content }))
+            .await
+            .map_err(|e| AkwError::Call {
+                tool: tool.to_string(),
+                message: e,
+            })?;
+        check_tool_error(&raw, tool)
+    }
+
+    /// Delete a memory page at `path`.
+    ///
+    /// Used by `prefs promote` (Q8 resolution) to remove the AKW draft once a
+    /// pending preference is promoted to the active pool. Best-effort: the
+    /// caller logs and continues on failure.
+    pub async fn memory_delete(&self, path: &str) -> Result<(), AkwError> {
+        let tool = "memory_delete";
+        let raw = self
+            .conn
+            .call_tool(tool, json!({ "path": path }))
+            .await
+            .map_err(|e| AkwError::Call {
+                tool: tool.to_string(),
+                message: e,
+            })?;
+        check_tool_error(&raw, tool)
+    }
+
+    /// Read a memory page at `path`. Returns the page's body content.
+    pub async fn memory_read(&self, path: &str) -> Result<String, AkwError> {
+        let tool = "memory_read";
+        let raw = self
+            .conn
+            .call_tool(tool, json!({ "path": path }))
+            .await
+            .map_err(|e| AkwError::Call {
+                tool: tool.to_string(),
+                message: e,
+            })?;
+        check_tool_error(&raw, tool)?;
+        // Extract content per parse_doc's logic.
+        if let Ok(json) = serde_json::from_str::<Value>(&raw) {
+            if let Some(c) = json.get("content").and_then(|v| v.as_str()) {
+                return Ok(c.to_string());
+            }
+        }
+        Ok(raw)
+    }
+
+    /// Search memory across one or more tiers. Returns top hits with content.
+    ///
+    /// `tiers`: optional list of tier names (e.g. `["knowledge", "research_draft"]`).
+    /// When `None`, AKW searches all tiers.
+    /// `path_excludes`: optional path-prefix excludes the caller wants applied
+    /// post-search (e.g. `"2_knowledges/preferences/"`). The harness handles
+    /// this client-side because not all AKW server versions support
+    /// path-exclude on the `memory_search` API.
+    pub async fn memory_search(
+        &self,
+        query: &str,
+        tier: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>, AkwError> {
+        let tool = "memory_search";
+        let mut args = json!({ "query": query, "limit": limit });
+        if let Some(t) = tier {
+            args["tier"] = json!(t);
+        }
+        let raw = self
+            .conn
+            .call_tool(tool, args)
+            .await
+            .map_err(|e| AkwError::Call {
+                tool: tool.to_string(),
+                message: e,
+            })?;
+        parse_search(&raw, tool)
+    }
+
     pub async fn shutdown(self) {
         self.conn.shutdown().await;
     }

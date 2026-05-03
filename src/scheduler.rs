@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
@@ -13,6 +14,7 @@ pub async fn run_heartbeat(
     session_mgr: Arc<Mutex<SessionManager>>,
     agent_name: String,
     interval_secs: u64,
+    root_dir: PathBuf,
 ) {
     info!(
         agent = %agent_name,
@@ -83,6 +85,7 @@ pub async fn run_heartbeat(
                 &agent_loop,
                 &db,
                 &session_mgr,
+                &root_dir,
                 &key,
                 &title,
                 description.as_deref(),
@@ -125,6 +128,7 @@ async fn execute_task(
     agent_loop: &AgentLoop,
     db: &Database,
     session_mgr: &Mutex<SessionManager>,
+    root_dir: &Path,
     key: &str,
     title: &str,
     description: Option<&str>,
@@ -167,36 +171,134 @@ async fn execute_task(
     // Generate conversation ID for this task execution
     let conv_id = format!("task-{}-{}", key, chrono::Utc::now().timestamp());
 
-    // Session start
-    {
+    // Session start — capture recommended_context for system prompt injection.
+    let recommended_context = {
         let mut mgr = session_mgr.lock().await;
-        mgr.ensure_session(&conv_id, "task").await;
-    }
+        mgr.ensure_session(&conv_id, "task").await
+    };
+
+    // Per-segment preference selection (EP-00015 Decision A — cached).
+    let selected_preferences = crate::preferences::select_for_segment_cached(
+        session_mgr,
+        &conv_id,
+        &message,
+        agent_loop.prefs_pool_dir(),
+        agent_loop.prefs_min_match_hits(),
+        agent_loop.prefs_token_budget(),
+    )
+    .await;
+
+    // Per-segment prior-work search (EP-00015 Decision B — cached).
+    let prior_work_query = format!("{} {}", title, description.unwrap_or(""));
+    let prior_work = crate::memory_context::build_prior_work_cached(
+        agent_loop.registry(),
+        session_mgr,
+        &conv_id,
+        &prior_work_query,
+        // Defaults — Phase 7 doc updates expose these via env, but for now
+        // we use the EP-00015 spec values.
+        3,
+        4000,
+    )
+    .await;
+
+    // Previous-run result for recurring tasks (EP-00015 Decision C).
+    let previous_run_result = task
+        .as_ref()
+        .filter(|t| t.schedule.is_some())
+        .and_then(|t| t.result.as_deref())
+        .map(crate::memory_context::format_previous_run_result)
+        .unwrap_or_default();
 
     // Execute via agent loop
-    let result = agent_loop.run(&message, &conv_id, "task", None).await;
+    let result = agent_loop
+        .run(
+            &message,
+            &conv_id,
+            "task",
+            None,
+            &recommended_context,
+            &selected_preferences,
+            &prior_work,
+            &previous_run_result,
+        )
+        .await;
 
-    // Session log + end
+    // Session log + end. Per EP-00015 Decision E2 the task channel intentionally
+    // does NOT produce a session draft (would be one-line spam) — research drafts
+    // and `tasks.result` already cover task content.
     {
         let mut mgr = session_mgr.lock().await;
         mgr.log_turn(&conv_id, &message, &result).await;
         mgr.end_session(&conv_id).await;
     }
 
-    // Complete task
+    // Complete task in DB
     let result_truncated: String = result.chars().take(2000).collect();
-    if result.starts_with("I'm sorry, all models failed")
-        || result.starts_with("LLM call failed")
-    {
+    let task_failed = result.starts_with("I'm sorry, all models failed")
+        || result.starts_with("LLM call failed");
+    if task_failed {
         if let Err(e) = db.update_task(key, Some("blocked"), Some(&result_truncated), None, None) {
             error!(task = %key, error = %e, "failed to mark task as blocked");
         }
         warn!(task = %key, "task execution failed");
-    } else {
-        if let Err(e) = db.complete_task(key, &result_truncated) {
-            error!(task = %key, error = %e, "failed to complete task");
+        return;
+    }
+    if let Err(e) = db.complete_task(key, &result_truncated) {
+        error!(task = %key, error = %e, "failed to complete task");
+        return;
+    }
+    info!(task = %key, "task completed");
+
+    // Skip everything below for system tasks (Decision I).
+    let task_metadata = task
+        .as_ref()
+        .and_then(|t| t.metadata.as_deref())
+        .and_then(|m| serde_json::from_str::<crate::db::TaskMetadata>(m).ok());
+
+    if task_metadata
+        .as_ref()
+        .and_then(|m| m.system)
+        .unwrap_or(false)
+    {
+        debug!(task = %key, "system task — skipping research draft + reflection");
+        return;
+    }
+
+    // EP-00015 Decision E — research draft persistence (opt-in).
+    let want_draft = task_metadata
+        .as_ref()
+        .and_then(|m| m.persist_as_draft)
+        .unwrap_or(false);
+    if want_draft {
+        // Refresh the task row to capture the latest result from complete_task.
+        let fresh_task = match db.get_task(key) {
+            Ok(Some(t)) => t,
+            _ => {
+                warn!(task = %key, "could not reload task for draft persistence");
+                return;
+            }
+        };
+        match crate::draft_writer::persist_research_draft(root_dir, agent_loop, &fresh_task).await {
+            Ok(path) => info!(task = %key, path = %path.display(), "research draft persisted"),
+            Err(e) => warn!(task = %key, error = %e, "research draft persistence failed"),
         }
-        info!(task = %key, "task completed");
+    }
+
+    // EP-00015 Decision F + G — reflection counter + maybe-fire (recurring tasks only).
+    let is_recurring = task.as_ref().and_then(|t| t.schedule.as_deref()).is_some();
+    if is_recurring {
+        let outcome = crate::reflection::increment_and_maybe_reflect(
+            root_dir,
+            db,
+            agent_loop,
+            crate::reflection::ScopeKind::TaskKey,
+            key,
+            // Phase 7 will surface this via env; for now the EP default.
+            5,
+        )
+        .await;
+        debug!(task = %key, fired = outcome.fired, counter = outcome.counter, "reflection result");
     }
 }
 

@@ -15,6 +15,23 @@ data/*.db-shm
 data/*.db-wal
 data/sessions/
 
+# EP-00015 — local-first artifact storage
+# Manifest is per-machine state; never commit.
+data/.akw_push_manifest.json
+# Session drafts hold conversation summaries; gitignored by default.
+data/drafts/sessions/
+# Pending preferences (reflection-generated, awaiting promotion).
+data/drafts/2_knowledges/preferences/
+# Research drafts — uncomment to gitignore if not version-controlled.
+# data/drafts/2_researches/
+# data/drafts/notes/
+
+# Local scratch (Python tests, experiments).
+workspace/
+
+# Claude Code local config / sessions
+.claude/
+
 # IDE
 .idea/
 .vscode/

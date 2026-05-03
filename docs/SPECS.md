@@ -114,6 +114,13 @@ GITHUB_TOKEN=...
 | `SKILLS_MIN_MATCH_HITS` | int | `2` | Min keyword overlaps for skill match |
 | `HEARTBEAT_INTERVAL` | int | `60` | Seconds between heartbeat cycles |
 | `PLATFORM_NAME` | string | `inotagent` | Platform identifier |
+| `AKW_PUSH_INTERVAL` | int | `3600` | EP-00015 — background AKW pusher interval. `0` disables. |
+| `PREFS_MIN_MATCH_HITS` | int | `2` | EP-00015 — preference selector keyword overlap threshold |
+| `PREFS_TOKEN_BUDGET` | int | `4000` | EP-00015 — preference selector total token budget |
+| `PRIOR_WORK_TOP_K` | int | `3` | EP-00015 — prior-work search top hits per segment |
+| `PRIOR_WORK_TOKEN_BUDGET` | int | `4000` | EP-00015 — prior-work injection budget across hits |
+| `REFLECTION_THRESHOLD` | int | `5` | EP-00015 — counter threshold to fire reflection |
+| `SESSION_DRAFT_INCLUDE_TURNS` | bool | `true` | EP-00015 — append capped `## Turns` section to session drafts |
 
 ### 3.3 Model Registry (`config/models.yml`)
 
@@ -1022,3 +1029,54 @@ Reverse order:
 | Regex | `regex` |
 | UUID | `uuid` |
 | Frontmatter parsing | `gray_matter` or custom |
+| SHA-256 hashing | `sha2` (EP-00015 push manifest) |
+
+---
+
+## 18. Local-First Artifact Storage (EP-00015)
+
+The full design is in `docs/EP-00015_20260503_memory-aware-task-and-reflection-loop.md`. Quick reference:
+
+**Architectural baseline**: every agent-produced artifact lands on the local filesystem first. AKW (and any future memory-MCP module) is durable backup, mirrored by a single artifact-agnostic background pusher. The agent's hot path never reads from AKW for selection — it reads only local files. AKW reads (`recommended_context`, prior-work search) are *enrichment* that augments the prompt when available and degrades silently when not.
+
+### 18.1 Watched artifact mappings
+
+| Artifact | Local canonical path | AKW backup path |
+|---|---|---|
+| Active preferences | `agents/_preferences/<slug>.md` | `2_knowledges/preferences/<slug>.md` |
+| Pending preferences | `data/drafts/2_knowledges/preferences/<slug>.md` | `1_drafts/2_knowledges/preferences/<slug>.md` |
+| Research drafts | `data/drafts/2_researches/<task_key>-<YYYYMMDDHHMM>-<slug>.md` | `1_drafts/2_researches/<file>.md` |
+| Session summaries | `data/drafts/sessions/<group_first_8>-<segment_compact_iso>.md` | `1_drafts/sessions/<file>.md` |
+| Ad-hoc note drafts | `data/drafts/notes/<slug>.md` | `1_drafts/notes/<file>.md` |
+
+The pusher's manifest (`data/.akw_push_manifest.json`) tracks `local_path → {sha256, last_pushed_at, akw_path}`. Gitignored.
+
+### 18.2 System prompt block order (Decision J2)
+
+Pinned in `agent_loop::build_system_prompt`:
+
+1. Character sheet
+2. `## User Preferences` (selected per task/segment, cached on `ActiveSession`)
+3. Core skills
+4. Equipped / AKW-fallback skills
+5. `## Project Context` (`recommended_context` from `mcp_akw__group_start`)
+6. `## Prior Work` (harness-driven `memory_search` against task title/description)
+7. `## Previous Run Result` (recurring tasks only)
+8. Cross-agent `@mention` context
+9. Parent conversation context
+10. (User message — appended by LLM client)
+
+Empty blocks are omitted entirely. A unit test (`agent_loop::tests::test_build_system_prompt_block_order`) catches drift.
+
+### 18.3 Reflection loop
+
+Two scopes per agent: `task_key` (per recurring task) and `agent_conv` (one bucket for conversation segments). Counter threshold default 5. Hooks:
+- `task_key` increments on `complete_task` success in `scheduler::execute_task` (skipped for `metadata.system: true` tasks).
+- `agent_conv` increments on segment-end in `flush_session_drafts` (skipped for task channels).
+
+On hit: retrieve last N artifacts from `data/drafts/2_researches/` (task_key) or `data/drafts/sessions/` (agent_conv), run a structured-output LLM call. On `pattern_found=true`, write a pending preference to `data/drafts/2_knowledges/preferences/`. On LLM failure-prefix, counter is **not** reset (next event retries).
+
+### 18.4 CLI
+
+- `barebone-agent akw push` / `akw status` — generic pusher control.
+- `barebone-agent prefs list | pull <slug> | promote <slug>` — preference-specific. `promote` also issues `mcp_akw__memory_delete` on the corresponding AKW draft (Q8 resolution; best-effort on AKW unavailability).
