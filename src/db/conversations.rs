@@ -119,6 +119,72 @@ impl Database {
         Ok(messages)
     }
 
+    /// Load all final user/assistant messages for a conversation in a time
+    /// window. Used by the EP-00015 session-draft producer (`session_draft.rs`)
+    /// to gather the segment's turns from SQLite.
+    ///
+    /// Both bounds are inclusive (RFC3339 strings comparable to
+    /// `created_at`). Tool messages are excluded — they're per-turn detail,
+    /// not user-facing turns.
+    pub fn load_final_turns_in_window(
+        &self,
+        conversation_id: &str,
+        started_at: &str,
+        ended_at: &str,
+    ) -> Result<Vec<ConversationMessage>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, conversation_id, agent_name, role, content, channel_type, \
+                 model_used, input_tokens, output_tokens, turn_id, is_final, metadata, created_at \
+                 FROM conversations \
+                 WHERE conversation_id = ?1 AND is_final = 1 \
+                 AND role IN ('user', 'assistant') \
+                 AND created_at >= ?2 AND created_at <= ?3 \
+                 ORDER BY id",
+            )
+            .map_err(|e| format!("Failed to prepare turns_in_window: {}", e))?;
+
+        let messages = stmt
+            .query_map(
+                rusqlite::params![conversation_id, started_at, ended_at],
+                |row| {
+                    Ok(ConversationMessage {
+                        id: row.get(0)?,
+                        conversation_id: row.get(1)?,
+                        agent_name: row.get(2)?,
+                        role: row.get(3)?,
+                        content: row.get(4)?,
+                        channel_type: row.get(5)?,
+                        model_used: row.get(6)?,
+                        input_tokens: row.get(7)?,
+                        output_tokens: row.get(8)?,
+                        turn_id: row.get(9)?,
+                        is_final: row.get(10)?,
+                        metadata: row.get(11)?,
+                        created_at: row.get(12)?,
+                    })
+                },
+            )
+            .map_err(|e| format!("Failed to query turns_in_window: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(messages)
+    }
+
+    /// Get the conversation's turn count (distinct turn_id values) for any
+    /// purpose that needs "is this the first turn?" detection (EP-00015
+    /// Phase 3 — first-turn prior-work search gate).
+    pub fn get_conversation_turn_count(&self, conversation_id: &str) -> Result<i64, String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(DISTINCT turn_id) FROM conversations WHERE conversation_id = ?1",
+            [conversation_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Failed to count turns: {}", e))
+    }
+
     /// Load all messages in a turn (for debug/audit).
     pub fn load_full_turn(&self, turn_id: &str) -> Result<Vec<ConversationMessage>, String> {
         let conn = self.conn.lock().unwrap();

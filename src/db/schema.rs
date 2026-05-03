@@ -143,6 +143,72 @@ impl Database {
         Ok((done, total))
     }
 
+    /// EP-00015 Decision F: increment a reflection counter atomically and
+    /// return the post-increment count. Creates the row if it doesn't exist.
+    pub fn increment_reflection_counter(
+        &self,
+        scope_type: &str,
+        scope_key: &str,
+        agent_name: &str,
+    ) -> Result<i64, String> {
+        let conn = self.conn.lock().unwrap();
+        // Use INSERT … ON CONFLICT for atomic upsert + increment.
+        conn.execute(
+            "INSERT INTO reflection_counters (scope_type, scope_key, agent_name, count) \
+             VALUES (?1, ?2, ?3, 1) \
+             ON CONFLICT(scope_type, scope_key, agent_name) DO UPDATE SET \
+                count = count + 1",
+            rusqlite::params![scope_type, scope_key, agent_name],
+        )
+        .map_err(|e| format!("Failed to increment reflection counter: {}", e))?;
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT count FROM reflection_counters \
+                 WHERE scope_type = ?1 AND scope_key = ?2 AND agent_name = ?3",
+                rusqlite::params![scope_type, scope_key, agent_name],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Failed to read reflection counter: {}", e))?;
+        Ok(count)
+    }
+
+    /// EP-00015 Decision F: reset a reflection counter to 0.
+    pub fn reset_reflection_counter(
+        &self,
+        scope_type: &str,
+        scope_key: &str,
+        agent_name: &str,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE reflection_counters SET count = 0, last_reset_at = CURRENT_TIMESTAMP \
+             WHERE scope_type = ?1 AND scope_key = ?2 AND agent_name = ?3",
+            rusqlite::params![scope_type, scope_key, agent_name],
+        )
+        .map_err(|e| format!("Failed to reset reflection counter: {}", e))?;
+        Ok(())
+    }
+
+    /// Read the current count for a counter (mostly for tests / status display).
+    pub fn get_reflection_counter(
+        &self,
+        scope_type: &str,
+        scope_key: &str,
+        agent_name: &str,
+    ) -> Result<i64, String> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count FROM reflection_counters \
+                 WHERE scope_type = ?1 AND scope_key = ?2 AND agent_name = ?3",
+                rusqlite::params![scope_type, scope_key, agent_name],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        Ok(count)
+    }
+
     /// Get recent activity (final messages) across agents, ordered by time desc.
     pub fn get_recent_activity(
         &self,
@@ -250,6 +316,17 @@ CREATE INDEX IF NOT EXISTS idx_task_agent ON tasks(agent_name);
 CREATE INDEX IF NOT EXISTS idx_task_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_task_mission ON tasks(mission_key);
 CREATE INDEX IF NOT EXISTS idx_task_schedule ON tasks(schedule);
+
+-- EP-00015 Decision F: per-scope reflection counters.
+-- Fresh-start migration (Q10) — no row backfill from existing data.
+CREATE TABLE IF NOT EXISTS reflection_counters (
+    scope_type     TEXT NOT NULL,        -- "task_key" | "agent_conv"
+    scope_key      TEXT NOT NULL,        -- e.g. "TSK-00007" or "_global"
+    agent_name     TEXT NOT NULL,
+    count          INTEGER NOT NULL DEFAULT 0,
+    last_reset_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (scope_type, scope_key, agent_name)
+);
 "#;
 
 #[cfg(test)]

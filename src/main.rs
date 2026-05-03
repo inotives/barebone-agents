@@ -1,21 +1,30 @@
 mod agent_loop;
+mod akw_pusher;
 mod channels;
 mod cli;
 mod cmd_agents;
+mod cmd_akw;
 mod cmd_config;
 mod cmd_conversations;
 mod cmd_missions;
+mod cmd_prefs;
 mod cmd_pull;
 mod cmd_tasks;
 mod cmd_tokens;
 mod config;
 mod db;
+mod draft_writer;
 mod llm;
+mod memory_context;
+mod preferences;
+mod reflection;
 mod scheduler;
 mod session;
+mod session_draft;
 mod skills;
 mod status;
 mod tools;
+mod triggers;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -112,6 +121,24 @@ async fn main() {
                 .unwrap();
             if let Err(e) = cmd_pull::run_role(&root_dir, command).await {
                 error!(error = %e, "role error");
+                std::process::exit(1);
+            }
+        }
+        Commands::Prefs { command } => {
+            let root_dir = std::env::current_dir()
+                .map_err(|e| format!("Failed to get cwd: {}", e))
+                .unwrap();
+            if let Err(e) = cmd_prefs::run(&root_dir, command).await {
+                error!(error = %e, "prefs error");
+                std::process::exit(1);
+            }
+        }
+        Commands::Akw { command } => {
+            let root_dir = std::env::current_dir()
+                .map_err(|e| format!("Failed to get cwd: {}", e))
+                .unwrap();
+            if let Err(e) = cmd_akw::run(&root_dir, command).await {
+                error!(error = %e, "akw error");
                 std::process::exit(1);
             }
         }
@@ -289,6 +316,9 @@ async fn init_agent(
         root_dir.join("agents").join("_skills"),
         settings.skills_token_budget,
         settings.skills_min_match_hits,
+        root_dir.join("agents").join("_preferences"),
+        settings.prefs_min_match_hits,
+        settings.prefs_token_budget,
     ));
 
     // Per-agent heartbeat
@@ -298,8 +328,9 @@ async fn init_agent(
         let sm = session_mgr.clone();
         let name = agent_name.to_string();
         let interval = settings.heartbeat_interval as u64;
+        let root = root_dir.to_path_buf();
         tokio::spawn(async move {
-            scheduler::run_heartbeat(al, db, sm, name, interval).await;
+            scheduler::run_heartbeat(al, db, sm, name, interval, root).await;
         })
     };
 
@@ -348,6 +379,55 @@ async fn init_agent(
     })
 }
 
+/// Spawn the EP-00015 generic AKW pusher if AKW is configured.
+///
+/// Returns `Some(handle)` if the pusher was spawned, `None` if AKW is not
+/// configured (local-only mode). The pusher task runs forever on the
+/// configured interval; abort it via `handle.abort()` on shutdown.
+fn spawn_pusher_if_configured(
+    root_dir: &std::path::Path,
+    interval_secs: u32,
+) -> Option<JoinHandle<()>> {
+    if interval_secs == 0 {
+        info!("pusher disabled (AKW_PUSH_INTERVAL=0)");
+        return None;
+    }
+    // Probe AKW config once at boot; if none, run in local-only mode.
+    if let Err(e) = tools::akw_client::resolve_akw_config(root_dir, None) {
+        info!(
+            "AKW MCP not configured — running in local-only mode, push disabled ({})",
+            e
+        );
+        return None;
+    }
+
+    let root = root_dir.to_path_buf();
+    let handle = tokio::spawn(async move {
+        // 30s warm-up before the first cycle (per Decision A2).
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+
+        let mappings = akw_pusher::default_mappings();
+        let manifest_path = root.join(akw_pusher::default_manifest_path());
+
+        loop {
+            // Connect lazily per cycle so AKW restarts are tolerated.
+            match tools::akw_client::AkwClient::connect(&root, None).await {
+                Ok(client) => {
+                    let _ = akw_pusher::push_cycle(&client, &mappings, &manifest_path, &root)
+                        .await;
+                    client.shutdown().await;
+                }
+                Err(e) => {
+                    warn!(error = %e, "pusher: AKW unavailable this cycle, will retry");
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(interval_secs as u64)).await;
+        }
+    });
+    info!(interval_secs, "AKW pusher spawned");
+    Some(handle)
+}
+
 async fn run_agents(
     agent_arg: Option<&str>,
     all: bool,
@@ -390,35 +470,69 @@ async fn run_agents(
             Err(e) => {
                 error!(agent = %name, error = %e, "failed to initialize agent");
                 // Shut down already-started agents
-                shutdown_agents(&mut running_agents).await;
+                shutdown_agents(
+                    &mut running_agents,
+                    &root_dir,
+                    &database,
+                    settings.session_draft_include_turns,
+                )
+                .await;
                 return Err(e);
             }
         }
     }
 
-    // 4. Build agent loop map for CLI routing
+    // 4. Build agent loop and session manager maps for CLI routing
     let agent_loops: HashMap<String, Arc<agent_loop::AgentLoop>> = running_agents
         .iter()
         .map(|ra| (ra.name.clone(), ra.agent_loop.clone()))
         .collect();
+    let session_mgrs: HashMap<String, Arc<tokio::sync::Mutex<session::SessionManager>>> =
+        running_agents
+            .iter()
+            .map(|ra| (ra.name.clone(), ra.session_mgr.clone()))
+            .collect();
+
+    // 4b. Spawn the EP-00015 generic AKW pusher (skipped if AKW not configured).
+    let pusher_handle = spawn_pusher_if_configured(&root_dir, settings.akw_push_interval);
 
     // 5. Run CLI channel (blocks until user exits)
-    channels::run_cli(&agent_loops, &default_agent, one_shot).await;
+    channels::run_cli(&agent_loops, &session_mgrs, &default_agent, one_shot).await;
 
     // 6. Graceful shutdown (reverse order)
-    shutdown_agents(&mut running_agents).await;
+    if let Some(h) = pusher_handle {
+        h.abort();
+        info!("AKW pusher stopped");
+    }
+    shutdown_agents(
+        &mut running_agents,
+        &root_dir,
+        &database,
+        settings.session_draft_include_turns,
+    )
+    .await;
 
     Ok(())
 }
 
 /// Shut down all running agents in reverse startup order.
-async fn shutdown_agents(agents: &mut Vec<RunningAgent>) {
+async fn shutdown_agents(
+    agents: &mut Vec<RunningAgent>,
+    root_dir: &Path,
+    database: &Arc<db::Database>,
+    include_turns: bool,
+) {
     for ra in agents.iter_mut().rev() {
         ra.heartbeat_handle.abort();
         if let Some(handle) = ra.discord_handle.take() {
             handle.abort();
             info!(agent = %ra.name, "Discord bot stopped");
         }
+        // EP-00015 Decision E2 — flush session drafts for non-task channels
+        // before tearing down the SessionManager. Reads turns from SQLite for
+        // each active conv_id within its segment time window.
+        flush_session_drafts(&ra.agent_loop, &ra.session_mgr, root_dir, database, include_turns)
+            .await;
         {
             let mut mgr = ra.session_mgr.lock().await;
             mgr.end_all().await;
@@ -426,6 +540,72 @@ async fn shutdown_agents(agents: &mut Vec<RunningAgent>) {
         info!(agent = %ra.name, "agent shut down");
     }
     info!("shutdown complete");
+}
+
+/// Iterate active sessions: for non-task channels, write a session draft and
+/// fire the conversation reflection counter (EP-00015 Decisions E2 + F/G).
+async fn flush_session_drafts(
+    agent_loop: &Arc<agent_loop::AgentLoop>,
+    session_mgr: &Arc<tokio::sync::Mutex<session::SessionManager>>,
+    root_dir: &Path,
+    database: &Arc<db::Database>,
+    include_turns: bool,
+) {
+    let conv_ids = {
+        let mgr = session_mgr.lock().await;
+        mgr.active_conv_ids()
+    };
+    let now = chrono::Utc::now();
+    for cid in conv_ids {
+        let (channel_type, started, group_id) = {
+            let mgr = session_mgr.lock().await;
+            let ch = match mgr.get_channel_type(&cid) {
+                Some(c) => c,
+                None => continue,
+            };
+            let st = match mgr.get_segment_started_at(&cid) {
+                Some(s) => s,
+                None => continue,
+            };
+            let gid = mgr.get_group_id(&cid);
+            (ch, st, gid)
+        };
+        if channel_type == "task" {
+            // Task channel: no session draft, no agent_conv counter increment.
+            continue;
+        }
+
+        match session_draft::write_session_draft(
+            root_dir,
+            agent_loop,
+            database.as_ref(),
+            &cid,
+            group_id.as_deref(),
+            &channel_type,
+            started,
+            now,
+            include_turns,
+        )
+        .await
+        {
+            Ok(_) => {
+                // Conversation segment ended — bump the agent_conv reflection
+                // counter and maybe fire (Decisions F + G).
+                let _ = reflection::increment_and_maybe_reflect(
+                    root_dir,
+                    database.as_ref(),
+                    agent_loop,
+                    reflection::ScopeKind::AgentConv,
+                    "_global",
+                    5,
+                )
+                .await;
+            }
+            Err(e) => {
+                warn!(conv_id = %cid, error = %e, "session draft write failed at shutdown");
+            }
+        }
+    }
 }
 
 /// Run an agents command (needs root_dir + model_registry + db).

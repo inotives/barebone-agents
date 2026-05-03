@@ -26,6 +26,16 @@ pub struct TaskMetadata {
     pub team: Option<String>,
     #[serde(default)]
     pub depends_on: Option<Vec<String>>,
+    /// EP-00015 Decision E: opt-in flag to persist task output as a research
+    /// draft at `data/drafts/2_researches/<task_key>-<YYYYMMDDHHMM>-<slug>.md`.
+    /// Default `None` (treated as `false`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persist_as_draft: Option<bool>,
+    /// EP-00015 Decision I: marks system-generated tasks (e.g. reflection
+    /// follow-ups). System tasks bypass reflection counters and prior-work
+    /// injection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<bool>,
 }
 
 impl Database {

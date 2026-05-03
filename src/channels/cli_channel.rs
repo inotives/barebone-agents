@@ -1,12 +1,21 @@
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use crate::agent_loop::AgentLoop;
+use crate::session::SessionManager;
 
 /// Run the CLI channel in REPL or one-shot mode.
 /// Supports multiple agents with `@name` routing.
+///
+/// `session_mgrs` mirrors `agents` keyed by agent name. Each agent's session
+/// manager is consulted at the start of every turn so the CLI channel gets
+/// the same `recommended_context` enrichment as Discord (Decision D of
+/// EP-00015). Empty `recommended_context` is acceptable — the agent loop
+/// just omits the `## Project Context` block.
 pub async fn run_cli(
     agents: &HashMap<String, Arc<AgentLoop>>,
+    session_mgrs: &HashMap<String, Arc<Mutex<SessionManager>>>,
     default_agent: &str,
     one_shot_message: Option<&str>,
 ) {
@@ -21,7 +30,47 @@ pub async fn run_cli(
         // One-shot mode — send to default agent
         if let Some(agent_loop) = agents.get(default_agent) {
             let conv_id = conv_ids.get(default_agent).unwrap();
-            let response = agent_loop.run(message, conv_id, "cli", None).await;
+            let (recommended_context, selected_preferences, prior_work) =
+                match session_mgrs.get(default_agent) {
+                    Some(sm) => {
+                        let recommended = {
+                            let mut mgr = sm.lock().await;
+                            mgr.ensure_session(conv_id, "cli").await
+                        };
+                        let prefs = crate::preferences::select_for_segment_cached(
+                            sm,
+                            conv_id,
+                            message,
+                            agent_loop.prefs_pool_dir(),
+                            agent_loop.prefs_min_match_hits(),
+                            agent_loop.prefs_token_budget(),
+                        )
+                        .await;
+                        let prior = crate::memory_context::build_prior_work_cached(
+                            agent_loop.registry(),
+                            sm,
+                            conv_id,
+                            message,
+                            3,
+                            4000,
+                        )
+                        .await;
+                        (recommended, prefs, prior)
+                    }
+                    None => (Vec::new(), Vec::new(), Vec::new()),
+                };
+            let response = agent_loop
+                .run(
+                    message,
+                    conv_id,
+                    "cli",
+                    None,
+                    &recommended_context,
+                    &selected_preferences,
+                    &prior_work,
+                    "",
+                )
+                .await;
             println!("{}", response);
         }
         return;
@@ -121,7 +170,83 @@ pub async fn run_cli(
             .get(target_name)
             .and_then(|p| p.as_deref());
 
-        let response = agent_loop.run(message, conv_id, "cli", parent_id).await;
+        // EP-00015 Decision H — manual `save as preference` keyword trigger.
+        if crate::triggers::detect_save_preference(message) {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            match crate::triggers::handle_save_preference(
+                &cwd,
+                agent_loop,
+                agent_loop.db(),
+                conv_id,
+            )
+            .await
+            {
+                Ok(Some(outcome)) => {
+                    let msg = crate::triggers::acknowledgement_message(&outcome.path, &cwd);
+                    if agents.len() > 1 {
+                        println!("\n[{}] {}\n", target_name, msg);
+                    } else {
+                        println!("\n{}\n", msg);
+                    }
+                }
+                Ok(None) => {
+                    println!(
+                        "\nNothing to save yet — this works after the assistant has responded at least once. Try again after the next reply.\n"
+                    );
+                }
+                Err(e) => {
+                    eprintln!("\nFailed to save preference: {}\n", e);
+                }
+            }
+            // Skip normal LLM call for this turn.
+            if prev_conv_ids.get(target_name).is_some() {
+                prev_conv_ids.remove(target_name);
+            }
+            continue;
+        }
+
+        let (recommended_context, selected_preferences, prior_work) =
+            match session_mgrs.get(target_name) {
+                Some(sm) => {
+                    let recommended = {
+                        let mut mgr = sm.lock().await;
+                        mgr.ensure_session(conv_id, "cli").await
+                    };
+                    let prefs = crate::preferences::select_for_segment_cached(
+                        sm,
+                        conv_id,
+                        message,
+                        agent_loop.prefs_pool_dir(),
+                        agent_loop.prefs_min_match_hits(),
+                        agent_loop.prefs_token_budget(),
+                    )
+                    .await;
+                    let prior = crate::memory_context::build_prior_work_cached(
+                        agent_loop.registry(),
+                        sm,
+                        conv_id,
+                        message,
+                        3,
+                        4000,
+                    )
+                    .await;
+                    (recommended, prefs, prior)
+                }
+                None => (Vec::new(), Vec::new(), Vec::new()),
+            };
+
+        let response = agent_loop
+            .run(
+                message,
+                conv_id,
+                "cli",
+                parent_id,
+                &recommended_context,
+                &selected_preferences,
+                &prior_work,
+                "",
+            )
+            .await;
 
         if agents.len() > 1 {
             println!("\n[{}] {}\n", target_name, response);

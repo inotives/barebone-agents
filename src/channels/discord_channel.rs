@@ -148,12 +148,37 @@ async fn event_handler(
         // Build or reuse session key.
         // We use the channel_id as the conversation-grouping key so messages
         // in the same channel / thread share a conversation.
-        let conv_id = {
+        let (conv_id, recommended_context) = {
             let mut mgr = data.session_mgr.lock().await;
             let conv_key = format!("discord-ch-{}", channel_id);
-            mgr.ensure_session(&conv_key, "discord").await;
-            conv_key
+            let context = mgr.ensure_session(&conv_key, "discord").await;
+            (conv_key, context)
         };
+
+        // EP-00015 Decision H — manual `save as preference` keyword trigger.
+        if crate::triggers::detect_save_preference(&content) {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let reply = match crate::triggers::handle_save_preference(
+                &cwd,
+                &data.agent_loop,
+                data.agent_loop.db(),
+                &conv_id,
+            )
+            .await
+            {
+                Ok(Some(outcome)) => {
+                    crate::triggers::acknowledgement_message(&outcome.path, &cwd)
+                }
+                Ok(None) => "Nothing to save yet — this works after I've responded at least once. Try again after my next reply.".into(),
+                Err(e) => format!("Failed to save preference: {}", e),
+            };
+            for chunk in split_message(&reply, 2000) {
+                if let Err(e) = channel_id.say(&ctx.http, chunk).await {
+                    error!(error = %e, "failed to send Discord ack message");
+                }
+            }
+            return Ok(());
+        }
 
         info!(
             agent = %data.agent_loop.agent_name,
@@ -165,10 +190,41 @@ async fn event_handler(
         // Show typing indicator
         let typing = channel_id.start_typing(&ctx.http);
 
+        // Per-segment preference selection (EP-00015 Decision A — cached).
+        let selected_preferences = crate::preferences::select_for_segment_cached(
+            &data.session_mgr,
+            &conv_id,
+            &content,
+            data.agent_loop.prefs_pool_dir(),
+            data.agent_loop.prefs_min_match_hits(),
+            data.agent_loop.prefs_token_budget(),
+        )
+        .await;
+
+        // Per-segment prior-work search (EP-00015 Decision B — cached).
+        let prior_work = crate::memory_context::build_prior_work_cached(
+            data.agent_loop.registry(),
+            &data.session_mgr,
+            &conv_id,
+            &content,
+            3,
+            4000,
+        )
+        .await;
+
         // Run agent loop
         let response = data
             .agent_loop
-            .run(&content, &conv_id, "discord", None)
+            .run(
+                &content,
+                &conv_id,
+                "discord",
+                None,
+                &recommended_context,
+                &selected_preferences,
+                &prior_work,
+                "", // previous_run_result is task-channel only
+            )
             .await;
 
         // Stop typing

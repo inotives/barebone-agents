@@ -20,6 +20,21 @@ pub struct Settings {
     pub heartbeat_interval: u32,
     pub platform_name: String,
     pub delegation_enabled: bool,
+    // ---------- EP-00015 ----------
+    /// Background pusher interval in seconds (Decision A2). 0 disables.
+    pub akw_push_interval: u32,
+    /// Preference selector min keyword overlap hits (Decision A).
+    pub prefs_min_match_hits: u32,
+    /// Preference selector total token budget (Decision A).
+    pub prefs_token_budget: u32,
+    /// Prior-work search top-K (Decision B).
+    pub prior_work_top_k: u32,
+    /// Prior-work search total token budget across hits (Decision B).
+    pub prior_work_token_budget: u32,
+    /// Reflection counter threshold (Decision F).
+    pub reflection_threshold: u32,
+    /// When true, session drafts include a `## Turns` appendix (Decision E2).
+    pub session_draft_include_turns: bool,
     /// All key-value pairs from root .env (for API keys, etc.)
     pub env: HashMap<String, String>,
 }
@@ -51,6 +66,13 @@ impl Settings {
             heartbeat_interval: env_or_parse(&env, "HEARTBEAT_INTERVAL", 60),
             platform_name: env_or(&env, "PLATFORM_NAME", "barebone-agent"),
             delegation_enabled: env_or_parse(&env, "DELEGATION_ENABLED", false),
+            akw_push_interval: env_or_parse(&env, "AKW_PUSH_INTERVAL", 3600),
+            prefs_min_match_hits: env_or_parse(&env, "PREFS_MIN_MATCH_HITS", 2),
+            prefs_token_budget: env_or_parse(&env, "PREFS_TOKEN_BUDGET", 4000),
+            prior_work_top_k: env_or_parse(&env, "PRIOR_WORK_TOP_K", 3),
+            prior_work_token_budget: env_or_parse(&env, "PRIOR_WORK_TOKEN_BUDGET", 4000),
+            reflection_threshold: env_or_parse(&env, "REFLECTION_THRESHOLD", 5),
+            session_draft_include_turns: env_or_parse(&env, "SESSION_DRAFT_INCLUDE_TURNS", true),
             env,
         }
     }
