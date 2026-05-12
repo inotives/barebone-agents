@@ -176,6 +176,67 @@ cargo test                # all tests (393+)
 cargo test agent_loop     # filter by module
 ```
 
+### Linux Mint — step-by-step (clone → start `ino`)
+
+Linux Mint is Ubuntu-based, so `apt` works.
+
+**1. System dependencies**
+```bash
+sudo apt update
+sudo apt install -y build-essential pkg-config libssl-dev ca-certificates git curl
+```
+
+**2. Clone the repo**
+```bash
+cd ~
+git clone https://github.com/inotives/barebone-agents.git
+cd barebone-agents
+```
+
+**3. Install + build (one-click)**
+```bash
+./install.sh
+```
+Auto-detects `apt`, installs the Rust toolchain if missing, runs `cargo build --release`, scaffolds `.env`, and creates the runtime dirs. Add `--with-akw` if you want the optional AKW knowledge backend.
+
+**4. Add an LLM key**
+`ino`'s fallback chain starts with NVIDIA, so an `NVIDIA_API_KEY` is the easiest:
+```bash
+echo "NVIDIA_API_KEY=<your-key>" >> .env
+```
+Any one of `NVIDIA_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GEMINI_API_KEY`, `GROQ_API_KEY`, or `OPENROUTER_API_KEY` is enough — but if you skip NVIDIA, reorder `agents/ino/agent.yml`'s `fallbacks:` so a key you actually have is first.
+
+**5. (Optional) Discord**
+```bash
+echo "DISCORD_BOT_TOKEN=<token>" >> agents/ino/.env
+```
+In `agents/ino/agent.yml`, confirm `channels.discord.enabled: true` and edit `allowFrom` to your own Discord user ID.
+
+**6. Smoke test (one-shot)**
+```bash
+./target/release/barebone-agent run --agent ino -m "say hi in one word"
+```
+
+**7. Start ino interactively**
+```bash
+./target/release/barebone-agent run --agent ino
+```
+Verbose mode if something looks off:
+```bash
+./target/release/barebone-agent --log-level debug run --agent ino
+```
+
+**8. (Optional) Put the binary on PATH**
+```bash
+sudo ln -s "$(pwd)/target/release/barebone-agent" /usr/local/bin/barebone-agent
+barebone-agent status
+```
+
+**Common gotchas on Mint**
+- `cargo: command not found` after install — open a new shell or `source "$HOME/.cargo/env"`.
+- `openssl-sys` build failure — you missed `libssl-dev` in step 1.
+- Discord bot doesn't respond — check `allowFrom` user ID and that `requireMention` matches how you ping it in the guild.
+
 ### Quick start (if you already have everything)
 
 ```bash
