@@ -1,9 +1,9 @@
+use crate::agent_loop::AgentLoop;
+use crate::session::SessionManager;
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::agent_loop::AgentLoop;
-use crate::session::SessionManager;
 
 /// Run the CLI channel in REPL or one-shot mode.
 /// Supports multiple agents with `@name` routing.
@@ -91,10 +91,7 @@ pub async fn run_cli(
         );
         println!("Type /help for commands, /quit to exit");
     }
-    println!(
-        "Conversation: {}\n",
-        conv_ids.get(default_agent).unwrap()
-    );
+    println!("Conversation: {}\n", conv_ids.get(default_agent).unwrap());
 
     loop {
         print!("{} > ", default_agent);
@@ -140,7 +137,11 @@ pub async fn run_cli(
         let agent_loop = match agents.get(target_name) {
             Some(a) => a,
             None => {
-                println!("Unknown agent '{}'. Available: {}", target_name, agent_names.join(", "));
+                println!(
+                    "Unknown agent '{}'. Available: {}",
+                    target_name,
+                    agent_names.join(", ")
+                );
                 continue;
             }
         };
@@ -166,9 +167,7 @@ pub async fn run_cli(
         }
 
         let conv_id = conv_ids.get(target_name).unwrap();
-        let parent_id = prev_conv_ids
-            .get(target_name)
-            .and_then(|p| p.as_deref());
+        let parent_id = prev_conv_ids.get(target_name).and_then(|p| p.as_deref());
 
         // EP-00015 Decision H — manual `save as preference` keyword trigger.
         if crate::triggers::detect_save_preference(message) {
@@ -285,7 +284,11 @@ fn parse_route<'a>(
 }
 
 fn new_conv_id(agent_name: &str) -> String {
-    format!("cli-{}-{}", agent_name, &uuid::Uuid::new_v4().to_string()[..8])
+    format!(
+        "cli-{}-{}",
+        agent_name,
+        &uuid::Uuid::new_v4().to_string()[..8]
+    )
 }
 
 #[cfg(test)]

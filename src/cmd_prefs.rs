@@ -1,39 +1,30 @@
-//! `barebone-agent prefs list | pull | promote` CLI verbs (EP-00015 Decision A).
+//! `barebone-agent prefs list | promote` CLI verbs.
 
 use std::path::{Path, PathBuf};
 
-use crate::akw_pusher::{default_manifest_path, drop_manifest_entry, hash_file, record_pulled_file};
 use crate::cli::PrefsCommand;
-use crate::tools::akw_client::AkwClient;
 
-const PREFS_PULL_AKW_PREFIX: &str = "2_knowledges/preferences/";
-const DRAFT_AKW_PREFIX: &str = "1_drafts/2_knowledges/preferences/";
+const PENDING_PREFS_DIR: &str = "data/drafts/knowledges/preferences";
 
 pub async fn run(root_dir: &Path, cmd: PrefsCommand) -> Result<(), String> {
     match cmd {
         PrefsCommand::List => run_list(root_dir),
-        PrefsCommand::Pull {
-            slug,
-            force,
-            rename,
-            agent,
-        } => run_pull(root_dir, &slug, force, rename.as_deref(), agent.as_deref()).await,
-        PrefsCommand::Promote { slug, agent } => {
-            run_promote(root_dir, &slug, agent.as_deref()).await
-        }
+        PrefsCommand::Promote { slug } => run_promote(root_dir, &slug).await,
     }
 }
 
-// ---------- list ----------
-
 fn run_list(root_dir: &Path) -> Result<(), String> {
     let active_dir = root_dir.join("agents/_preferences");
-    let pending_dir = root_dir.join("data/drafts/2_knowledges/preferences");
+    let pending_dir = root_dir.join(PENDING_PREFS_DIR);
 
     let active = list_dir(&active_dir);
     let pending = list_dir(&pending_dir);
 
-    println!("Active preferences ({}): {}", active.len(), active_dir.display());
+    println!(
+        "Active preferences ({}): {}",
+        active.len(),
+        active_dir.display()
+    );
     if active.is_empty() {
         println!("  (none)");
     } else {
@@ -43,7 +34,11 @@ fn run_list(root_dir: &Path) -> Result<(), String> {
     }
 
     println!();
-    println!("Pending preferences ({}): {}", pending.len(), pending_dir.display());
+    println!(
+        "Pending preferences ({}): {}",
+        pending.len(),
+        pending_dir.display()
+    );
     if pending.is_empty() {
         println!("  (none — reflection drafts land here; promote with `prefs promote <slug>`)");
     } else {
@@ -84,7 +79,11 @@ fn list_dir(dir: &Path) -> Vec<PrefEntry> {
             Err(_) => continue,
         };
         let (scope, summary) = parse_scope_summary(&raw);
-        out.push(PrefEntry { slug, scope, summary });
+        out.push(PrefEntry {
+            slug,
+            scope,
+            summary,
+        });
     }
     out.sort_by(|a, b| a.slug.cmp(&b.slug));
     out
@@ -121,78 +120,8 @@ fn print_pref_entry(entry: &PrefEntry) {
     }
 }
 
-// ---------- pull ----------
-
-async fn run_pull(
-    root_dir: &Path,
-    slug: &str,
-    force: bool,
-    rename: Option<&str>,
-    agent_override: Option<&str>,
-) -> Result<(), String> {
-    let final_slug = rename.unwrap_or(slug).to_string();
-    let target = root_dir.join(format!("agents/_preferences/{}.md", final_slug));
-
-    if target.exists() && !force {
-        return Err(format!(
-            "File exists at {}. Use --force to overwrite or --rename <new_slug> to write under a different name.",
-            display_relative(root_dir, &target)
-        ));
-    }
-
-    let client = AkwClient::connect(root_dir, agent_override)
-        .await
-        .map_err(|e| e.to_string())?;
-    println!("Using akw config from {}", client.source_path());
-
-    let akw_path = if slug.contains('/') {
-        slug.to_string()
-    } else {
-        format!("{}{}.md", PREFS_PULL_AKW_PREFIX, slug)
-    };
-
-    let content = client
-        .memory_read(&akw_path)
-        .await
-        .map_err(|e| e.to_string());
-    client.shutdown().await;
-    let content = content?;
-
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("failed to create {}: {}", parent.display(), e))?;
-    }
-    std::fs::write(&target, &content)
-        .map_err(|e| format!("failed to write {}: {}", target.display(), e))?;
-
-    // Per Decision A2 / EP-00015 Q7-fix: write a manifest entry so the next
-    // pusher cycle doesn't re-push the same content back to AKW.
-    let local_path_str = display_relative(root_dir, &target);
-    let sha = hash_file(&target)?;
-    let manifest_path = root_dir.join(default_manifest_path());
-    if let Err(e) = record_pulled_file(&manifest_path, &local_path_str, &sha, &akw_path) {
-        eprintln!("warning: failed to update push manifest: {}", e);
-    }
-
-    let action = if force { "Overwrote" } else { "Wrote" };
-    println!(
-        "{} {} from AKW path {} ({} bytes)",
-        action,
-        local_path_str,
-        akw_path,
-        content.len()
-    );
-    Ok(())
-}
-
-// ---------- promote ----------
-
-async fn run_promote(
-    root_dir: &Path,
-    slug: &str,
-    agent_override: Option<&str>,
-) -> Result<(), String> {
-    let pending_dir = root_dir.join("data/drafts/2_knowledges/preferences");
+async fn run_promote(root_dir: &Path, slug: &str) -> Result<(), String> {
+    let pending_dir = root_dir.join(PENDING_PREFS_DIR);
     let active_dir = root_dir.join("agents/_preferences");
 
     // Locate the source file. `slug` may be a bare slug (no extension) or a
@@ -230,9 +159,7 @@ async fn run_promote(
             .map_err(|e| format!("failed to create {}: {}", parent.display(), e))?;
     }
 
-    // Move source → target.
     std::fs::rename(&source, &target).or_else(|_| {
-        // Cross-device rename can fail; fall back to copy + remove.
         std::fs::copy(&source, &target)
             .map_err(|e| format!("failed to copy {}: {}", source.display(), e))?;
         std::fs::remove_file(&source).map_err(|e| {
@@ -244,51 +171,11 @@ async fn run_promote(
         })
     })?;
 
-    // Drop the manifest entry for the pending path (file moved/gone).
-    let manifest_path = root_dir.join(default_manifest_path());
-    let pending_local_str = display_relative(root_dir, &source);
-    if let Err(e) = drop_manifest_entry(&manifest_path, &pending_local_str) {
-        eprintln!("warning: failed to drop pending manifest entry: {}", e);
-    }
-
     println!(
         "Promoted {} → {}",
         display_relative(root_dir, &source),
         display_relative(root_dir, &target)
     );
-
-    // Best-effort delete of the AKW draft (Decision A / Q8 resolution).
-    let draft_akw_path = format!("{}{}.md", DRAFT_AKW_PREFIX, final_slug);
-    match AkwClient::connect(root_dir, agent_override).await {
-        Ok(client) => {
-            let result = client.memory_delete(&draft_akw_path).await;
-            client.shutdown().await;
-            match result {
-                Ok(()) => println!("Deleted AKW draft at {}", draft_akw_path),
-                Err(e) => {
-                    let msg = e.to_string();
-                    if msg.to_lowercase().contains("not found")
-                        || msg.contains("404")
-                        || msg.to_lowercase().contains("does not exist")
-                    {
-                        // The draft was never pushed. Harmless.
-                        eprintln!("(note: AKW draft at {} was not present — nothing to delete)", draft_akw_path);
-                    } else {
-                        eprintln!(
-                            "warning: failed to delete AKW draft at {}: {} (orphan accepted)",
-                            draft_akw_path, msg
-                        );
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!(
-                "warning: AKW MCP not reachable; AKW draft at {} left as orphan ({})",
-                draft_akw_path, e
-            );
-        }
-    }
 
     Ok(())
 }

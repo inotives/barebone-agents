@@ -228,8 +228,7 @@ impl Database {
         since: Option<&str>,
     ) -> Result<TokenUsage, String> {
         let conn = self.conn.lock().unwrap();
-        let (sql, params): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(since) =
-            since
+        let (sql, params): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(since) = since
         {
             (
                 "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) \
@@ -247,7 +246,8 @@ impl Database {
             )
         };
 
-        let params_ref: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         conn.query_row(sql, params_ref.as_slice(), |row| {
             Ok(TokenUsage {
                 input_tokens: row.get(0)?,
@@ -270,7 +270,10 @@ impl Database {
 
         if let Some(meta_str) = metadata {
             if let Ok(json) = serde_json::from_str::<Value>(&meta_str) {
-                return Ok(json.get("parent_id").and_then(|v| v.as_str()).map(String::from));
+                return Ok(json
+                    .get("parent_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from));
             }
         }
         Ok(None)
@@ -327,11 +330,10 @@ impl Database {
     ) -> Result<Vec<ConversationSummary>, String> {
         let conn = self.conn.lock().unwrap();
 
-        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(agent) =
-            agent_name
-        {
-            (
-                "SELECT conversation_id, agent_name, channel_type, \
+        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
+            if let Some(agent) = agent_name {
+                (
+                    "SELECT conversation_id, agent_name, channel_type, \
                  COUNT(DISTINCT turn_id) as turn_count, \
                  COUNT(*) as message_count, \
                  COALESCE(SUM(input_tokens), 0) as total_input_tokens, \
@@ -341,15 +343,12 @@ impl Database {
                  FROM conversations WHERE agent_name = ?1 \
                  GROUP BY conversation_id \
                  ORDER BY last_message_at DESC LIMIT ?2"
-                    .to_string(),
-                vec![
-                    Box::new(agent.to_string()),
-                    Box::new(limit),
-                ],
-            )
-        } else {
-            (
-                "SELECT conversation_id, agent_name, channel_type, \
+                        .to_string(),
+                    vec![Box::new(agent.to_string()), Box::new(limit)],
+                )
+            } else {
+                (
+                    "SELECT conversation_id, agent_name, channel_type, \
                  COUNT(DISTINCT turn_id) as turn_count, \
                  COUNT(*) as message_count, \
                  COALESCE(SUM(input_tokens), 0) as total_input_tokens, \
@@ -359,10 +358,10 @@ impl Database {
                  FROM conversations \
                  GROUP BY conversation_id \
                  ORDER BY last_message_at DESC LIMIT ?1"
-                    .to_string(),
-                vec![Box::new(limit)],
-            )
-        };
+                        .to_string(),
+                    vec![Box::new(limit)],
+                )
+            };
 
         let params_ref: Vec<&dyn rusqlite::types::ToSql> =
             params.iter().map(|p| p.as_ref()).collect();
@@ -443,27 +442,26 @@ impl Database {
     ) -> Result<Vec<(String, i64, i64)>, String> {
         let conn = self.conn.lock().unwrap();
 
-        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(agent) =
-            agent_name
-        {
-            (
-                "SELECT DATE(created_at) as day, \
+        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
+            if let Some(agent) = agent_name {
+                (
+                    "SELECT DATE(created_at) as day, \
                  COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) \
                  FROM conversations WHERE agent_name = ?1 \
                  GROUP BY day ORDER BY day DESC LIMIT ?2"
-                    .to_string(),
-                vec![Box::new(agent.to_string()), Box::new(limit)],
-            )
-        } else {
-            (
-                "SELECT DATE(created_at) as day, \
+                        .to_string(),
+                    vec![Box::new(agent.to_string()), Box::new(limit)],
+                )
+            } else {
+                (
+                    "SELECT DATE(created_at) as day, \
                  COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) \
                  FROM conversations \
                  GROUP BY day ORDER BY day DESC LIMIT ?1"
-                    .to_string(),
-                vec![Box::new(limit)],
-            )
-        };
+                        .to_string(),
+                    vec![Box::new(limit)],
+                )
+            };
 
         let params_ref: Vec<&dyn rusqlite::types::ToSql> =
             params.iter().map(|p| p.as_ref()).collect();
@@ -598,15 +596,45 @@ mod tests {
         )
         .unwrap();
         db.save_message(
-            "conv-1", "ino", "assistant", "calling tool", "cli", None, 0, 0, "turn-001", false, None,
+            "conv-1",
+            "ino",
+            "assistant",
+            "calling tool",
+            "cli",
+            None,
+            0,
+            0,
+            "turn-001",
+            false,
+            None,
         )
         .unwrap();
         db.save_message(
-            "conv-1", "ino", "tool", "tool result", "cli", None, 0, 0, "turn-001", false, None,
+            "conv-1",
+            "ino",
+            "tool",
+            "tool result",
+            "cli",
+            None,
+            0,
+            0,
+            "turn-001",
+            false,
+            None,
         )
         .unwrap();
         db.save_message(
-            "conv-1", "ino", "assistant", "final", "cli", None, 0, 0, "turn-001", true, None,
+            "conv-1",
+            "ino",
+            "assistant",
+            "final",
+            "cli",
+            None,
+            0,
+            0,
+            "turn-001",
+            true,
+            None,
         )
         .unwrap();
 
@@ -624,7 +652,17 @@ mod tests {
         )
         .unwrap();
         db.save_message(
-            "conv-1", "ino", "assistant", "a1", "cli", Some("model-1"), 0, 200, "t1", true, None,
+            "conv-1",
+            "ino",
+            "assistant",
+            "a1",
+            "cli",
+            Some("model-1"),
+            0,
+            200,
+            "t1",
+            true,
+            None,
         )
         .unwrap();
 
@@ -646,7 +684,17 @@ mod tests {
         let db = setup();
         let meta = r#"{"parent_id": "conv-0"}"#;
         db.save_message(
-            "conv-1", "ino", "user", "hello", "cli", None, 0, 0, "t1", true, Some(meta),
+            "conv-1",
+            "ino",
+            "user",
+            "hello",
+            "cli",
+            None,
+            0,
+            0,
+            "t1",
+            true,
+            Some(meta),
         )
         .unwrap();
 
@@ -677,7 +725,17 @@ mod tests {
         )
         .unwrap();
         db.save_message(
-            "conv-2", "robin", "user", "robin msg", "cli", None, 0, 0, "t2", true, None,
+            "conv-2",
+            "robin",
+            "user",
+            "robin msg",
+            "cli",
+            None,
+            0,
+            0,
+            "t2",
+            true,
+            None,
         )
         .unwrap();
 
@@ -690,10 +748,24 @@ mod tests {
     fn test_save_message_returns_id() {
         let db = setup();
         let id1 = db
-            .save_message("c1", "ino", "user", "hi", "cli", None, 0, 0, "t1", true, None)
+            .save_message(
+                "c1", "ino", "user", "hi", "cli", None, 0, 0, "t1", true, None,
+            )
             .unwrap();
         let id2 = db
-            .save_message("c1", "ino", "assistant", "yo", "cli", None, 0, 0, "t1", true, None)
+            .save_message(
+                "c1",
+                "ino",
+                "assistant",
+                "yo",
+                "cli",
+                None,
+                0,
+                0,
+                "t1",
+                true,
+                None,
+            )
             .unwrap();
         assert_eq!(id1, 1);
         assert_eq!(id2, 2);

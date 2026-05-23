@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use tracing::debug;
@@ -323,9 +323,11 @@ mod tests {
         });
         let gemini = convert_tool_def(&tool);
         assert_eq!(gemini["name"], "search");
-        assert!(gemini["parameters"]["properties"]["q"]
-            .get("default")
-            .is_none());
+        assert!(
+            gemini["parameters"]["properties"]["q"]
+                .get("default")
+                .is_none()
+        );
     }
 
     #[test]

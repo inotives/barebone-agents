@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use crate::agent_loop::AgentLoop;
-use crate::db::{is_due, Database};
+use crate::db::{Database, is_due};
 use crate::session::SessionManager;
 
 /// Background heartbeat that executes due tasks.
@@ -111,12 +111,7 @@ fn get_due_tasks(
         };
 
         if task_due {
-            due.push((
-                task.key,
-                task.title,
-                task.description,
-                task.schedule,
-            ));
+            due.push((task.key, task.title, task.description, task.schedule));
         }
     }
 
@@ -235,8 +230,8 @@ async fn execute_task(
 
     // Complete task in DB
     let result_truncated: String = result.chars().take(2000).collect();
-    let task_failed = result.starts_with("I'm sorry, all models failed")
-        || result.starts_with("LLM call failed");
+    let task_failed =
+        result.starts_with("I'm sorry, all models failed") || result.starts_with("LLM call failed");
     if task_failed {
         if let Err(e) = db.update_task(key, Some("blocked"), Some(&result_truncated), None, None) {
             error!(task = %key, error = %e, "failed to mark task as blocked");
@@ -341,8 +336,16 @@ mod tests {
     fn test_get_due_tasks_scheduled_not_yet() {
         let db = setup_db();
         // Create hourly task that just ran
-        db.create_task("Hourly", None, None, Some("ino"), Some("hourly"), None, None)
-            .unwrap();
+        db.create_task(
+            "Hourly",
+            None,
+            None,
+            Some("ino"),
+            Some("hourly"),
+            None,
+            None,
+        )
+        .unwrap();
         // Mark as just run by completing it (sets last_run_at)
         db.complete_task("TSK-00001", "done").unwrap();
 
@@ -376,8 +379,16 @@ mod tests {
     fn test_get_due_tasks_scheduled_never_run() {
         let db = setup_db();
         // Hourly task that has never run → should be due
-        db.create_task("Hourly", None, None, Some("ino"), Some("hourly"), None, None)
-            .unwrap();
+        db.create_task(
+            "Hourly",
+            None,
+            None,
+            Some("ino"),
+            Some("hourly"),
+            None,
+            None,
+        )
+        .unwrap();
 
         let due = get_due_tasks(&db, "ino").unwrap();
         assert_eq!(due.len(), 1);

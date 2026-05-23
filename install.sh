@@ -2,16 +2,11 @@
 # barebone-agents bootstrap installer.
 #
 # Default install gets you a working agent (CLI + Discord) with local-first
-# memory and preferences. AKW (agent-knowledge MCP server) is OPTIONAL — adds
-# durable backup of preferences/drafts and prior-work auto-recall in prompts.
-# You can add it later by re-running with --with-akw; the script is idempotent.
+# memory and preferences.
 #
 # Usage:
 #   ./install.sh                          # base install (recommended starting point)
 #   ./install.sh --with-systemd           # also write a user systemd unit for ino
-#   ./install.sh --with-akw               # also set up agent-knowledge MCP (advanced)
-#   ./install.sh --with-akw --akw-repo <url>           # skip the prompt
-#   ./install.sh --with-akw --akw-path <dir>           # skip the path prompt
 #   ./install.sh --non-interactive                     # skip prompts; assume defaults
 #
 # Designed to be idempotent — safe to re-run.
@@ -31,21 +26,15 @@ ask()  { # ask "prompt" "default"
 }
 
 # ---------- args ----------
-WITH_AKW=0
 WITH_SYSTEMD=0
 NON_INTERACTIVE=0
-AKW_PATH=""
-AKW_REPO=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --with-akw)         WITH_AKW=1 ;;
     --with-systemd)     WITH_SYSTEMD=1 ;;
     --non-interactive)  NON_INTERACTIVE=1 ;;
-    --akw-path)         AKW_PATH="$2"; shift ;;
-    --akw-repo)         AKW_REPO="$2"; shift ;;
     -h|--help)
-      sed -n '2,16p' "$0"; exit 0 ;;
+      sed -n '2,12p' "$0"; exit 0 ;;
     *) err "unknown flag: $1" ;;
   esac
   shift
@@ -120,65 +109,10 @@ fi
 # obvious and prevents the first push/draft write from hitting an unexpected
 # permission error if `data/` itself doesn't exist yet.
 log "scaffolding data/drafts/* (local-first artifact storage)…"
-mkdir -p data/drafts/2_researches
-mkdir -p data/drafts/2_knowledges/preferences
+mkdir -p data/drafts/researches
+mkdir -p data/drafts/knowledges/preferences
 mkdir -p data/drafts/sessions
 mkdir -p data/drafts/notes
-
-# ---------- AKW (optional, advanced) ----------
-# AKW is the agent-knowledge MCP server. It's not required — the harness boots
-# fine without it and all EP-00015 hot-path features (preferences, reflection,
-# local drafts) work locally. Skip on first install; add later if you decide
-# you want durable preference backup and prior-work auto-recall.
-if [[ "${WITH_AKW}" == "1" ]]; then
-  log "AKW setup requested"
-
-  if ! command -v uv >/dev/null 2>&1; then
-    log "installing uv (Python package manager AKW uses)…"
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.local/bin:$PATH"
-  fi
-
-  if [[ -z "${AKW_PATH}" ]]; then
-    AKW_PATH="$(ask "AKW install path" "$(dirname "${ROOT_DIR}")/agent-knowledge")"
-  fi
-
-  if [[ ! -d "${AKW_PATH}" ]]; then
-    if [[ -z "${AKW_REPO}" ]]; then
-      AKW_REPO="$(ask "AKW git repo URL (operator-provided; no public default)" "")"
-    fi
-    if [[ -z "${AKW_REPO}" ]]; then
-      err "no AKW repo URL provided. Pass --akw-repo <url> or set up AKW manually and re-run with --akw-path <dir>."
-    fi
-    log "cloning AKW into ${AKW_PATH}…"
-    git clone "${AKW_REPO}" "${AKW_PATH}"
-  else
-    log "AKW already at ${AKW_PATH} — skipping clone"
-  fi
-
-  log "syncing AKW python deps via uv…"
-  ( cd "${AKW_PATH}" && uv sync )
-
-  # Patch agents/ino/agent.yml: replace any hardcoded AKW path with the user's.
-  if grep -qE '/(Users|home)/[^/]+/Workspace/agent-knowledge(-wikia)?' agents/ino/agent.yml 2>/dev/null; then
-    log "patching agents/ino/agent.yml AKW path → ${AKW_PATH}"
-    # macOS sed needs '' after -i; gnu sed does not. Detect and branch.
-    if sed --version >/dev/null 2>&1; then
-      sed -i  -E "s|/(Users\|home)/[^/]+/Workspace/agent-knowledge(-wikia)?|${AKW_PATH}|g" agents/ino/agent.yml
-    else
-      sed -i '' -E "s|/(Users\|home)/[^/]+/Workspace/agent-knowledge(-wikia)?|${AKW_PATH}|g" agents/ino/agent.yml
-    fi
-  fi
-else
-  # No AKW: detect a stale hardcoded path that would try to spawn an unconfigured server.
-  if grep -qE '/(Users|home)/[^/]+/Workspace/agent-knowledge(-wikia)?' agents/ino/agent.yml 2>/dev/null; then
-    warn "agents/ino/agent.yml has a hardcoded AKW path that doesn't exist on this host."
-    warn "AKW is optional — to silence this warning either:"
-    warn "  - re-run with --with-akw (see --help for required flags), OR"
-    warn "  - remove the 'mcp_servers' block (the akw entry) from agents/ino/agent.yml."
-    warn "The agent will still boot; AKW-related features just degrade gracefully."
-  fi
-fi
 
 # ---------- config validate ----------
 log "validating config…"
@@ -241,22 +175,4 @@ echo "    matching ones into its system prompt on each task / first conversation
 echo "    A starter template is at ${BLD}agents/_preferences/.template.md${RST}."
 echo "  - List the pool:    ${BLD}barebone-agent prefs list${RST}"
 echo "  - Promote pending:  ${BLD}barebone-agent prefs promote <slug>${RST}"
-echo
-if [[ "${WITH_AKW}" == "1" ]]; then
-  echo "${BLD}AKW backup (enabled):${RST}"
-  echo "  - Inspect backups:  ${BLD}barebone-agent akw status${RST}"
-  echo "  - Force a backup:   ${BLD}barebone-agent akw push${RST}"
-  echo "    (the background pusher runs this automatically once an hour while the agent runs)"
-  echo "  - Pull a pref:      ${BLD}barebone-agent prefs pull <slug>${RST}"
-else
-  echo "${BLD}AKW backup (optional, not installed):${RST}"
-  echo "  AKW is the agent-knowledge MCP server. Adding it gives you:"
-  echo "    - durable backup of your preferences and drafts to a wiki-style store"
-  echo "    - automatic prior-work recall in prompts (via memory_search)"
-  echo "    - cross-machine / cross-agent preference sharing"
-  echo
-  echo "  The harness works fine without it — all EP-00015 hot-path features are"
-  echo "  local-only by design. Add it later with:"
-  echo "    ${BLD}./install.sh --with-akw --akw-repo <url>${RST}"
-fi
 echo

@@ -21,8 +21,7 @@ impl SquadConfig {
     pub fn load(path: &Path) -> Result<Self, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read squad config at {}: {}", path.display(), e))?;
-        serde_yaml::from_str(&content)
-            .map_err(|e| format!("Failed to parse squad config: {}", e))
+        serde_yaml::from_str(&content).map_err(|e| format!("Failed to parse squad config: {}", e))
     }
 }
 

@@ -189,7 +189,9 @@ mod tests {
     #[test]
     fn test_create_mission() {
         let db = setup();
-        let key = db.create_mission("Mission Alpha", Some("First mission"), Some("ino")).unwrap();
+        let key = db
+            .create_mission("Mission Alpha", Some("First mission"), Some("ino"))
+            .unwrap();
         assert_eq!(key, "MIS-00001");
 
         let key2 = db.create_mission("Mission Bravo", None, None).unwrap();
@@ -213,7 +215,8 @@ mod tests {
         let db = setup();
         let k1 = db.create_mission("Active", None, None).unwrap();
         let k2 = db.create_mission("Done", None, None).unwrap();
-        db.update_mission(&k2, Some("completed"), None, None).unwrap();
+        db.update_mission(&k2, Some("completed"), None, None)
+            .unwrap();
 
         let active = db.list_missions(Some("active")).unwrap();
         assert_eq!(active.len(), 1);

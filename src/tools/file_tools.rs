@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -217,7 +217,10 @@ mod tests {
     #[test]
     fn test_file_read_max_lines() {
         let (_dir, ws) = setup();
-        let content = (0..100).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n");
+        let content = (0..100)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
         file_write(&ws, json!({"path": "many.txt", "content": content}));
 
         let result = file_read(&ws, json!({"path": "many.txt", "max_lines": 5}));
@@ -243,10 +246,7 @@ mod tests {
     #[test]
     fn test_file_write_traversal_blocked() {
         let (_dir, ws) = setup();
-        let result = file_write(
-            &ws,
-            json!({"path": "../../evil.txt", "content": "bad"}),
-        );
+        let result = file_write(&ws, json!({"path": "../../evil.txt", "content": "bad"}));
         assert!(result.contains("escapes workspace"));
     }
 

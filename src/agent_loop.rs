@@ -1,17 +1,15 @@
 use regex::Regex;
-use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::config::ModelConfig;
 use crate::db::Database;
-use crate::llm::{truncate_history, LLMClientPool, LLMMessage};
+use crate::llm::{LLMClientPool, LLMMessage, truncate_history};
 use crate::skills::{self, CoreSkills};
 use crate::tools::ToolRegistry;
 
-/// Format a `## Project Context` system-prompt block from
-/// `mcp_akw__group_start`'s `recommended_context` field. Empty input → empty
+/// Format a `## Project Context` system-prompt block. Empty input -> empty
 /// string (caller skips emission).
 fn format_project_context(items: &[String]) -> String {
     let pieces: Vec<&str> = items
@@ -63,7 +61,6 @@ pub struct AgentLoop {
     tool_result_max_chars: usize,
     history_limit: u32,
     core_skills: CoreSkills,
-    akw_skills_enabled: bool,
     equipped_skills_pool_dir: PathBuf,
     equipped_skills_token_budget: u32,
     equipped_skills_min_match_hits: u32,
@@ -86,7 +83,6 @@ impl AgentLoop {
         tool_result_max_chars: usize,
         history_limit: u32,
         core_skills: CoreSkills,
-        akw_skills_enabled: bool,
         equipped_skills_pool_dir: PathBuf,
         equipped_skills_token_budget: u32,
         equipped_skills_min_match_hits: u32,
@@ -106,7 +102,6 @@ impl AgentLoop {
             tool_result_max_chars,
             history_limit,
             core_skills,
-            akw_skills_enabled,
             equipped_skills_pool_dir,
             equipped_skills_token_budget,
             equipped_skills_min_match_hits,
@@ -163,19 +158,16 @@ impl AgentLoop {
 
     /// Main entry point for the agent reasoning loop.
     ///
-    /// `recommended_context` is the project-keyed standing context returned by
-    /// `mcp_akw__group_start` (per Decision D of EP-00015). Empty slice → omit
-    /// the `## Project Context` block entirely.
+    /// `recommended_context` is project-keyed standing context. Empty slice
+    /// omits the `## Project Context` block entirely.
     ///
     /// `selected_preferences` holds the per-segment cached preference
     /// selection (EP-00015 Decision A). Each entry is a fully-formatted
     /// preference body (e.g. "### slug (scope: x)\n\n…"). Empty slice → omit
     /// the `## User Preferences` block.
     ///
-    /// `prior_work` holds the per-segment cached prior-work hits from
-    /// `mcp_akw__memory_search` (EP-00015 Decision B). Each entry is one
-    /// AKW page's content prefixed by its path. Empty slice → omit the
-    /// `## Prior Work` block.
+    /// `prior_work` holds per-segment cached prior-work hits. Empty slice
+    /// omits the `## Prior Work` block.
     ///
     /// `previous_run_result` is for recurring tasks (Decision C) — the
     /// previous completion's `result` field, already formatted as the
@@ -224,7 +216,7 @@ impl AgentLoop {
             warn!(error = %e, "failed to save user message");
         }
 
-        // Pick task-relevant skills: local pool first, AKW only if local returns nothing.
+        // Pick task-relevant skills from the local pool.
         let dynamic_skills = self.fetch_dynamic_skills(message).await;
 
         // Build system prompt
@@ -281,7 +273,15 @@ impl AgentLoop {
             Ok(r) => r,
             Err(e) => {
                 let error_msg = format!("I'm sorry, all models failed: {}", e);
-                self.save_final_response(conversation_id, &turn_id, channel_type, &error_msg, 0, 0, "error");
+                self.save_final_response(
+                    conversation_id,
+                    &turn_id,
+                    channel_type,
+                    &error_msg,
+                    0,
+                    0,
+                    "error",
+                );
                 return error_msg;
             }
         };
@@ -396,7 +396,13 @@ impl AgentLoop {
                 Err(e) => {
                     let error_msg = format!("LLM call failed during tool loop: {}", e);
                     self.save_final_response(
-                        conversation_id, &turn_id, channel_type, &error_msg, 0, 0, "error",
+                        conversation_id,
+                        &turn_id,
+                        channel_type,
+                        &error_msg,
+                        0,
+                        0,
+                        "error",
                     );
                     return error_msg;
                 }
@@ -461,7 +467,7 @@ impl AgentLoop {
     ///   1. Character sheet
     ///   2. ## User Preferences           (added in EP-00015 Phase 2)
     ///   3. Core skills
-    ///   4. Equipped / AKW-fallback skills
+    ///   4. Equipped skills
     ///   5. ## Project Context            (recommended_context — Decision D)
     ///   6. ## Prior Work                 (added in EP-00015 Phase 3)
     ///   7. ## Previous Run Result        (added in EP-00015 Phase 3, task channel only)
@@ -498,21 +504,20 @@ impl AgentLoop {
             prompt.push_str(&skills_section);
         }
 
-        // 4. Dynamic skills: either "## Equipped Skills" (from local pool) or
-        //    "## AKW Skills" (AKW fallback). The header is included by the formatter.
+        // 4. Dynamic skills from the local pool. The header is included by the formatter.
         if !dynamic_skills.is_empty() {
             prompt.push_str("\n\n");
             prompt.push_str(dynamic_skills);
         }
 
-        // 5. Project Context (recommended_context from AKW group_start).
+        // 5. Project Context.
         let project_context = format_project_context(recommended_context);
         if !project_context.is_empty() {
             prompt.push_str("\n\n");
             prompt.push_str(&project_context);
         }
 
-        // 6. Prior Work (EP-00015 Decision B — message-aware AKW retrieval).
+        // 6. Prior Work.
         let prior_work_block = format_prior_work(prior_work);
         if !prior_work_block.is_empty() {
             prompt.push_str("\n\n");
@@ -552,18 +557,13 @@ impl AgentLoop {
         prompt
     }
 
-    /// Pick task-relevant skills for system-prompt injection.
+    /// Pick task-relevant local skills for system-prompt injection.
     ///
-    /// Resolution order:
-    /// 1. Local `agents/_skills/*.md` pool — keyword + body match against the message,
-    ///    filtered by `min_match_hits`, packed into `token_budget`. Returns formatted
-    ///    `## Equipped Skills` block on success.
-    /// 2. AKW `skill_search` fallback — only if the local pool returned no matches.
-    ///    Returns formatted `## AKW Skills` block on success.
-    ///
-    /// Returns empty string when neither resolves.
+    /// The local `agents/_skills/*.md` pool is keyword + body matched against
+    /// the message, filtered by `min_match_hits`, and packed into
+    /// `token_budget`. Returns formatted `## Equipped Skills` on success, or
+    /// an empty string when no local skill matches.
     async fn fetch_dynamic_skills(&self, message: &str) -> String {
-        // 1. Local pool first
         let pool = skills::load_equipped_pool(&self.equipped_skills_pool_dir);
         if !pool.is_empty() {
             let chosen = skills::select_equipped_skills(
@@ -583,101 +583,7 @@ impl AgentLoop {
             }
         }
 
-        // 2. AKW fallback
-        self.fetch_akw_skills(message).await
-    }
-
-    async fn fetch_akw_skills(&self, message: &str) -> String {
-        if !self.akw_skills_enabled || !self.registry.has("mcp_akw__skill_search") {
-            return String::new();
-        }
-
-        // Search for skills matching the task/message. skill_search is tier-scoped
-        // by definition (only walks 3_intelligences/skills/**/SKILL.md).
-        let search_result = self
-            .registry
-            .execute(
-                "mcp_akw__skill_search",
-                serde_json::json!({
-                    "query": message,
-                }),
-            )
-            .await;
-
-        debug!(
-            agent = %self.agent_name,
-            result_len = search_result.len(),
-            "AKW skill_search response"
-        );
-
-        let paths: Vec<String> = match serde_json::from_str::<Value>(&search_result) {
-            Ok(json) => {
-                // Handle multiple response formats:
-                // 1. {"result": [{...}, ...]} — wrapped array
-                // 2. [{...}, ...] — bare array
-                // 3. {"path": ...} — single object
-                let items = if let Some(arr) = json.get("result").and_then(|r| r.as_array()) {
-                    arr.clone()
-                } else if let Some(arr) = json.as_array() {
-                    arr.clone()
-                } else if json.get("path").is_some() {
-                    vec![json]
-                } else {
-                    Vec::new()
-                };
-
-                items
-                    .iter()
-                    .take(3)
-                    .filter_map(|item| {
-                        item.get("path").and_then(|p| p.as_str()).map(String::from)
-                    })
-                    .collect()
-            }
-            Err(e) => {
-                debug!(agent = %self.agent_name, error = %e, "failed to parse AKW search result");
-                return String::new();
-            }
-        };
-
-        debug!(agent = %self.agent_name, paths = ?paths, "AKW skill paths found");
-
-        if paths.is_empty() {
-            return String::new();
-        }
-
-        // Read each skill's full content
-        let mut skills = Vec::new();
-        for path in &paths {
-            let read_result = self
-                .registry
-                .execute(
-                    "mcp_akw__memory_read",
-                    serde_json::json!({"path": path}),
-                )
-                .await;
-
-            if let Ok(json) = serde_json::from_str::<Value>(&read_result) {
-                if let Some(content) = json.get("content").and_then(|c| c.as_str()) {
-                    skills.push(content.to_string());
-                }
-            } else if !read_result.is_empty() {
-                // Fallback: the result itself might be the content as plain text
-                skills.push(read_result);
-            }
-        }
-
-        debug!(
-            agent = %self.agent_name,
-            count = skills.len(),
-            "AKW skills loaded for task"
-        );
-
-        if skills.is_empty() {
-            String::new()
-        } else {
-            format!("## AKW Skills\n\n{}", skills.join("\n\n---\n\n"))
-        }
+        String::new()
     }
 
     fn build_mention_context(&self, message: &str) -> String {
@@ -728,10 +634,7 @@ impl AgentLoop {
     }
 
     fn build_parent_context(&self, parent_conv_id: &str) -> String {
-        let messages = self
-            .db
-            .load_history(parent_conv_id, 5)
-            .unwrap_or_default();
+        let messages = self.db.load_history(parent_conv_id, 5).unwrap_or_default();
 
         if messages.is_empty() {
             return String::new();
@@ -762,9 +665,30 @@ mod tests {
     fn test_mention_context_with_known_agent() {
         let db = setup_db();
         // Add some data for robin
-        db.save_message("c1", "robin", "assistant", "I finished the task", "cli", None, 0, 0, "t1", true, None).unwrap();
-        db.create_task("Robin's task", None, None, Some("robin"), None, None, None).unwrap();
-        db.update_task("TSK-00001", Some("done"), Some("Completed successfully"), None, None).unwrap();
+        db.save_message(
+            "c1",
+            "robin",
+            "assistant",
+            "I finished the task",
+            "cli",
+            None,
+            0,
+            0,
+            "t1",
+            true,
+            None,
+        )
+        .unwrap();
+        db.create_task("Robin's task", None, None, Some("robin"), None, None, None)
+            .unwrap();
+        db.update_task(
+            "TSK-00001",
+            Some("done"),
+            Some("Completed successfully"),
+            None,
+            None,
+        )
+        .unwrap();
 
         let pool = Arc::new(LLMClientPool::new(
             &crate::config::ModelRegistry { models: vec![] },
@@ -791,8 +715,11 @@ mod tests {
             10,
             5000,
             20,
-            CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
-            false,
+            CoreSkills {
+                content: String::new(),
+                count: 0,
+                token_estimate: 0,
+            },
             PathBuf::from("/nonexistent/_skills"),
             4000,
             2,
@@ -834,8 +761,11 @@ mod tests {
             10,
             5000,
             20,
-            CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
-            false,
+            CoreSkills {
+                content: String::new(),
+                count: 0,
+                token_estimate: 0,
+            },
             PathBuf::from("/nonexistent/_skills"),
             4000,
             2,
@@ -876,8 +806,11 @@ mod tests {
             10,
             5000,
             20,
-            CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
-            false,
+            CoreSkills {
+                content: String::new(),
+                count: 0,
+                token_estimate: 0,
+            },
             PathBuf::from("/nonexistent/_skills"),
             4000,
             2,
@@ -893,8 +826,34 @@ mod tests {
     #[test]
     fn test_parent_context() {
         let db = setup_db();
-        db.save_message("parent-conv", "ino", "user", "original question", "cli", None, 0, 0, "t1", true, None).unwrap();
-        db.save_message("parent-conv", "ino", "assistant", "original answer", "cli", None, 0, 0, "t1", true, None).unwrap();
+        db.save_message(
+            "parent-conv",
+            "ino",
+            "user",
+            "original question",
+            "cli",
+            None,
+            0,
+            0,
+            "t1",
+            true,
+            None,
+        )
+        .unwrap();
+        db.save_message(
+            "parent-conv",
+            "ino",
+            "assistant",
+            "original answer",
+            "cli",
+            None,
+            0,
+            0,
+            "t1",
+            true,
+            None,
+        )
+        .unwrap();
 
         let pool = Arc::new(LLMClientPool::new(
             &crate::config::ModelRegistry { models: vec![] },
@@ -921,8 +880,11 @@ mod tests {
             10,
             5000,
             20,
-            CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
-            false,
+            CoreSkills {
+                content: String::new(),
+                count: 0,
+                token_estimate: 0,
+            },
             PathBuf::from("/nonexistent/_skills"),
             4000,
             2,
@@ -988,7 +950,6 @@ mod tests {
             5000,
             20,
             core,
-            false,
             PathBuf::from("/nonexistent/_skills"),
             4000,
             2,
@@ -1054,14 +1015,34 @@ mod tests {
         let db = setup_db();
         // Set up parent context too
         db.save_message(
-            "parent-conv", "ino", "user", "earlier question",
-            "cli", None, 0, 0, "t1", true, None,
-        ).unwrap();
+            "parent-conv",
+            "ino",
+            "user",
+            "earlier question",
+            "cli",
+            None,
+            0,
+            0,
+            "t1",
+            true,
+            None,
+        )
+        .unwrap();
         // Mention agent setup
         db.save_message(
-            "robin-conv", "robin", "assistant", "robin earlier",
-            "cli", None, 0, 0, "t2", true, None,
-        ).unwrap();
+            "robin-conv",
+            "robin",
+            "assistant",
+            "robin earlier",
+            "cli",
+            None,
+            0,
+            0,
+            "t2",
+            true,
+            None,
+        )
+        .unwrap();
 
         let core = CoreSkills {
             content: "Do good work.".into(),
@@ -1095,18 +1076,35 @@ mod tests {
         let prior_pos = prompt.find("## Prior Work").expect("prior work");
         let prev_pos = prompt.find("## Previous Run Result").expect("previous run");
         let mention_pos = prompt.find("## Context from @robin").expect("mention");
-        let parent_pos = prompt.find("## Previous Conversation Context").expect("parent");
+        let parent_pos = prompt
+            .find("## Previous Conversation Context")
+            .expect("parent");
 
         // Decision J2 order: charsheet < user_prefs < core < equipped <
         //                   project < prior < prev_run < mention < parent.
-        assert!(charsheet_pos < user_prefs_pos, "charsheet must precede user preferences");
-        assert!(user_prefs_pos < core_pos, "user preferences must precede core skills");
+        assert!(
+            charsheet_pos < user_prefs_pos,
+            "charsheet must precede user preferences"
+        );
+        assert!(
+            user_prefs_pos < core_pos,
+            "user preferences must precede core skills"
+        );
         assert!(core_pos < equipped_pos, "core must precede equipped");
-        assert!(equipped_pos < project_pos, "equipped must precede project context");
-        assert!(project_pos < prior_pos, "project context must precede prior work");
+        assert!(
+            equipped_pos < project_pos,
+            "equipped must precede project context"
+        );
+        assert!(
+            project_pos < prior_pos,
+            "project context must precede prior work"
+        );
         assert!(prior_pos < prev_pos, "prior work must precede previous run");
         assert!(prev_pos < mention_pos, "previous run must precede mention");
-        assert!(mention_pos < parent_pos, "mention must precede parent context");
+        assert!(
+            mention_pos < parent_pos,
+            "mention must precede parent context"
+        );
     }
 
     #[test]
@@ -1137,8 +1135,11 @@ mod tests {
             10,
             5000,
             20,
-            CoreSkills { content: String::new(), count: 0, token_estimate: 0 },
-            false,
+            CoreSkills {
+                content: String::new(),
+                count: 0,
+                token_estimate: 0,
+            },
             PathBuf::from("/nonexistent/_skills"),
             4000,
             2,

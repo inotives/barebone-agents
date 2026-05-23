@@ -1,10 +1,9 @@
-mod registry;
-pub mod file_tools;
-pub mod shell_tool;
-pub mod web_tools;
-pub mod task_tools;
 pub mod delegate;
+pub mod file_tools;
 pub mod mcp;
-pub mod akw_client;
+mod registry;
+pub mod shell_tool;
+pub mod task_tools;
+pub mod web_tools;
 
 pub use registry::ToolRegistry;

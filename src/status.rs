@@ -3,8 +3,8 @@ use std::path::Path;
 use chrono::{Duration, Utc};
 use serde_json::json;
 
-use crate::config::{AgentConfig, ModelRegistry};
 use crate::config::settings::agent_dir;
+use crate::config::{AgentConfig, ModelRegistry};
 use crate::db::{Database, DbTokenUsage};
 
 /// Which sections to render.
@@ -56,9 +56,7 @@ impl TokenPeriod {
     /// Return the `since` date string for SQL, or None for total.
     pub fn since(&self) -> Option<String> {
         match self {
-            Self::Today => {
-                Some(Utc::now().format("%Y-%m-%d").to_string())
-            }
+            Self::Today => Some(Utc::now().format("%Y-%m-%d").to_string()),
             Self::Week => {
                 let week_ago = Utc::now() - Duration::days(7);
                 Some(week_ago.format("%Y-%m-%d").to_string())
@@ -140,10 +138,19 @@ fn build_text(
     out.push_str("=== barebone-agent status ===\n\n");
 
     if show_all || matches!(query.section, Section::Agents) {
-        out.push_str(&text_agents(db, root_dir, model_registry, query.agent_filter.as_deref()));
+        out.push_str(&text_agents(
+            db,
+            root_dir,
+            model_registry,
+            query.agent_filter.as_deref(),
+        ));
     }
     if show_all || matches!(query.section, Section::Tokens) {
-        out.push_str(&text_tokens(db, &query.token_period, query.agent_filter.as_deref()));
+        out.push_str(&text_tokens(
+            db,
+            &query.token_period,
+            query.agent_filter.as_deref(),
+        ));
     }
     if show_all || matches!(query.section, Section::Tasks) {
         out.push_str(&text_tasks(db, query.agent_filter.as_deref()));
@@ -211,17 +218,19 @@ fn json_agents(
     filter: Option<&str>,
 ) -> serde_json::Value {
     let agents = get_agent_info(db, root_dir, model_registry, filter);
-    json!(agents
-        .iter()
-        .map(|(name, role, model, last_active)| {
-            json!({
-                "name": name,
-                "role": role,
-                "model": model,
-                "last_active": last_active,
+    json!(
+        agents
+            .iter()
+            .map(|(name, role, model, last_active)| {
+                json!({
+                    "name": name,
+                    "role": role,
+                    "model": model,
+                    "last_active": last_active,
+                })
             })
-        })
-        .collect::<Vec<_>>())
+            .collect::<Vec<_>>()
+    )
 }
 
 // --- Tokens section ---
@@ -256,11 +265,7 @@ fn text_tokens(db: &Database, period: &TokenPeriod, filter: Option<&str>) -> Str
     out
 }
 
-fn json_tokens(
-    db: &Database,
-    period: &TokenPeriod,
-    filter: Option<&str>,
-) -> serde_json::Value {
+fn json_tokens(db: &Database, period: &TokenPeriod, filter: Option<&str>) -> serde_json::Value {
     let since = period.since();
     let agents = db.get_registered_agents().unwrap_or_default();
     let agents: Vec<_> = agents
@@ -357,9 +362,7 @@ fn text_missions(db: &Database) -> String {
         out.push_str("  (no missions)\n");
     } else {
         for m in &missions {
-            let (done, total) = db
-                .get_mission_task_progress(&m.key)
-                .unwrap_or((0, 0));
+            let (done, total) = db.get_mission_task_progress(&m.key).unwrap_or((0, 0));
             out.push_str(&format!(
                 "  {} [{}] {} ({}/{})\n",
                 m.key, m.status, m.title, done, total
@@ -372,19 +375,21 @@ fn text_missions(db: &Database) -> String {
 
 fn json_missions(db: &Database) -> serde_json::Value {
     let missions = db.list_missions(None).unwrap_or_default();
-    json!(missions
-        .iter()
-        .map(|m| {
-            let (done, total) = db.get_mission_task_progress(&m.key).unwrap_or((0, 0));
-            json!({
-                "key": m.key,
-                "title": m.title,
-                "status": m.status,
-                "done": done,
-                "total": total,
+    json!(
+        missions
+            .iter()
+            .map(|m| {
+                let (done, total) = db.get_mission_task_progress(&m.key).unwrap_or((0, 0));
+                json!({
+                    "key": m.key,
+                    "title": m.title,
+                    "status": m.status,
+                    "done": done,
+                    "total": total,
+                })
             })
-        })
-        .collect::<Vec<_>>())
+            .collect::<Vec<_>>()
+    )
 }
 
 // --- Activity section ---
@@ -410,18 +415,20 @@ fn text_activity(db: &Database, filter: Option<&str>) -> String {
 
 fn json_activity(db: &Database, filter: Option<&str>) -> serde_json::Value {
     let events = db.get_recent_activity(filter, 15).unwrap_or_default();
-    json!(events
-        .iter()
-        .map(|(time, agent, channel, role, content)| {
-            json!({
-                "time": time,
-                "agent": agent,
-                "channel": channel,
-                "role": role,
-                "content": content,
+    json!(
+        events
+            .iter()
+            .map(|(time, agent, channel, role, content)| {
+                json!({
+                    "time": time,
+                    "agent": agent,
+                    "channel": channel,
+                    "role": role,
+                    "content": content,
+                })
             })
-        })
-        .collect::<Vec<_>>())
+            .collect::<Vec<_>>()
+    )
 }
 
 #[cfg(test)]
@@ -436,9 +443,15 @@ mod tests {
 
     #[test]
     fn test_token_period_parse() {
-        assert!(matches!(TokenPeriod::parse("today"), Ok(TokenPeriod::Today)));
+        assert!(matches!(
+            TokenPeriod::parse("today"),
+            Ok(TokenPeriod::Today)
+        ));
         assert!(matches!(TokenPeriod::parse("week"), Ok(TokenPeriod::Week)));
-        assert!(matches!(TokenPeriod::parse("total"), Ok(TokenPeriod::Total)));
+        assert!(matches!(
+            TokenPeriod::parse("total"),
+            Ok(TokenPeriod::Total)
+        ));
         assert!(TokenPeriod::parse("invalid").is_err());
     }
 
@@ -480,8 +493,24 @@ mod tests {
     fn test_text_tokens_with_data() {
         let (db, _dir) = setup();
         db.register_agent("ino").unwrap();
-        db.save_message("c1", "ino", "user", "hi", "cli", None, 500, 0, "t1", true, None).unwrap();
-        db.save_message("c1", "ino", "assistant", "yo", "cli", Some("m1"), 0, 200, "t1", true, None).unwrap();
+        db.save_message(
+            "c1", "ino", "user", "hi", "cli", None, 500, 0, "t1", true, None,
+        )
+        .unwrap();
+        db.save_message(
+            "c1",
+            "ino",
+            "assistant",
+            "yo",
+            "cli",
+            Some("m1"),
+            0,
+            200,
+            "t1",
+            true,
+            None,
+        )
+        .unwrap();
 
         let out = text_tokens(&db, &TokenPeriod::Total, None);
         assert!(out.contains("ino"));
@@ -499,9 +528,12 @@ mod tests {
     #[test]
     fn test_text_tasks_with_data() {
         let (db, _dir) = setup();
-        db.create_task("Build feature", None, None, Some("ino"), None, None, None).unwrap();
-        db.update_task("TSK-00001", Some("in_progress"), None, None, None).unwrap();
-        db.create_task("Write tests", None, None, Some("ino"), None, None, None).unwrap();
+        db.create_task("Build feature", None, None, Some("ino"), None, None, None)
+            .unwrap();
+        db.update_task("TSK-00001", Some("in_progress"), None, None, None)
+            .unwrap();
+        db.create_task("Write tests", None, None, Some("ino"), None, None, None)
+            .unwrap();
 
         let out = text_tasks(&db, None);
         assert!(out.contains("Status counts:"));
@@ -520,8 +552,11 @@ mod tests {
     fn test_text_missions_with_progress() {
         let (db, _dir) = setup();
         let mk = db.create_mission("Ship v1", None, None).unwrap();
-        db.create_task("Task A", None, Some(&mk), None, None, None, None).unwrap();
-        let tk = db.create_task("Task B", None, Some(&mk), None, None, None, None).unwrap();
+        db.create_task("Task A", None, Some(&mk), None, None, None, None)
+            .unwrap();
+        let tk = db
+            .create_task("Task B", None, Some(&mk), None, None, None, None)
+            .unwrap();
         db.complete_task(&tk, "done").unwrap();
 
         let out = text_missions(&db);
@@ -540,7 +575,20 @@ mod tests {
     fn test_text_activity_with_data() {
         let (db, _dir) = setup();
         db.register_agent("ino").unwrap();
-        db.save_message("c1", "ino", "user", "hello there", "cli", None, 0, 0, "t1", true, None).unwrap();
+        db.save_message(
+            "c1",
+            "ino",
+            "user",
+            "hello there",
+            "cli",
+            None,
+            0,
+            0,
+            "t1",
+            true,
+            None,
+        )
+        .unwrap();
 
         let out = text_activity(&db, None);
         assert!(out.contains("ino"));
@@ -590,8 +638,14 @@ mod tests {
         let (db, _dir) = setup();
         db.register_agent("ino").unwrap();
         db.register_agent("robin").unwrap();
-        db.save_message("c1", "ino", "user", "hi", "cli", None, 100, 0, "t1", true, None).unwrap();
-        db.save_message("c2", "robin", "user", "hey", "cli", None, 200, 0, "t2", true, None).unwrap();
+        db.save_message(
+            "c1", "ino", "user", "hi", "cli", None, 100, 0, "t1", true, None,
+        )
+        .unwrap();
+        db.save_message(
+            "c2", "robin", "user", "hey", "cli", None, 200, 0, "t2", true, None,
+        )
+        .unwrap();
 
         let out = text_tokens(&db, &TokenPeriod::Total, Some("ino"));
         assert!(out.contains("ino"));

@@ -1,8 +1,8 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
-use crate::db::{Database, TaskMetadata};
 use super::registry::ToolRegistry;
+use crate::db::{Database, TaskMetadata};
 
 /// Register task, mission, and conversation tools.
 pub fn register(registry: &mut ToolRegistry, db: Arc<Database>, agent_name: String) {
@@ -203,7 +203,10 @@ fn task_create(db: &Database, default_agent: &str, args: Value) -> String {
     let priority = args.get("priority").and_then(|p| p.as_str());
 
     let metadata = {
-        let class = args.get("agent_class").and_then(|c| c.as_str()).map(String::from);
+        let class = args
+            .get("agent_class")
+            .and_then(|c| c.as_str())
+            .map(String::from);
         let depends_on = args
             .get("depends_on")
             .and_then(|d| d.as_array())
@@ -244,22 +247,20 @@ fn task_get(db: &Database, args: Value) -> String {
     };
 
     match db.get_task(key) {
-        Ok(Some(task)) => {
-            json!({
-                "key": task.key,
-                "title": task.title,
-                "description": task.description,
-                "status": task.status,
-                "priority": task.priority,
-                "agent_name": task.agent_name,
-                "schedule": task.schedule,
-                "result": task.result,
-                "mission_key": task.mission_key,
-                "created_at": task.created_at,
-                "updated_at": task.updated_at,
-            })
-            .to_string()
-        }
+        Ok(Some(task)) => json!({
+            "key": task.key,
+            "title": task.title,
+            "description": task.description,
+            "status": task.status,
+            "priority": task.priority,
+            "agent_name": task.agent_name,
+            "schedule": task.schedule,
+            "result": task.result,
+            "mission_key": task.mission_key,
+            "created_at": task.created_at,
+            "updated_at": task.updated_at,
+        })
+        .to_string(),
         Ok(None) => format!("Task {} not found", key),
         Err(e) => format!("Error: {}", e),
     }
@@ -467,7 +468,8 @@ mod tests {
     #[test]
     fn test_task_update() {
         let db = setup();
-        db.create_task("T", None, None, None, None, None, None).unwrap();
+        db.create_task("T", None, None, None, None, None, None)
+            .unwrap();
         let result = task_update(&db, json!({"key": "TSK-00001", "status": "in_progress"}));
         assert!(result.contains("Updated"));
     }
@@ -475,8 +477,10 @@ mod tests {
     #[test]
     fn test_task_list_default_agent() {
         let db = setup();
-        db.create_task("A", None, None, Some("ino"), None, None, None).unwrap();
-        db.create_task("B", None, None, Some("robin"), None, None, None).unwrap();
+        db.create_task("A", None, None, Some("ino"), None, None, None)
+            .unwrap();
+        db.create_task("B", None, None, Some("robin"), None, None, None)
+            .unwrap();
 
         let result = task_list(&db, "ino", json!({}));
         assert!(result.contains("A"));
@@ -486,8 +490,10 @@ mod tests {
     #[test]
     fn test_task_list_all_agents() {
         let db = setup();
-        db.create_task("A", None, None, Some("ino"), None, None, None).unwrap();
-        db.create_task("B", None, None, Some("robin"), None, None, None).unwrap();
+        db.create_task("A", None, None, Some("ino"), None, None, None)
+            .unwrap();
+        db.create_task("B", None, None, Some("robin"), None, None, None)
+            .unwrap();
 
         let result = task_list(&db, "ino", json!({"agent_name": "all"}));
         assert!(result.contains("A"));
@@ -520,12 +526,48 @@ mod tests {
     #[test]
     fn test_conversation_search() {
         let db = setup();
-        db.save_message("c1", "ino", "user", "hello world", "cli", None, 0, 0, "t1", true, None)
-            .unwrap();
-        db.save_message("c1", "ino", "assistant", "tool call", "cli", None, 0, 0, "t1", false, None)
-            .unwrap();
-        db.save_message("c1", "ino", "assistant", "goodbye world", "cli", None, 0, 0, "t1", true, None)
-            .unwrap();
+        db.save_message(
+            "c1",
+            "ino",
+            "user",
+            "hello world",
+            "cli",
+            None,
+            0,
+            0,
+            "t1",
+            true,
+            None,
+        )
+        .unwrap();
+        db.save_message(
+            "c1",
+            "ino",
+            "assistant",
+            "tool call",
+            "cli",
+            None,
+            0,
+            0,
+            "t1",
+            false,
+            None,
+        )
+        .unwrap();
+        db.save_message(
+            "c1",
+            "ino",
+            "assistant",
+            "goodbye world",
+            "cli",
+            None,
+            0,
+            0,
+            "t1",
+            true,
+            None,
+        )
+        .unwrap();
 
         let result = conversation_search(&db, json!({"query": "world"}));
         assert!(result.contains("hello world"));

@@ -129,7 +129,10 @@ struct ExtractedPreference {
     keywords: Vec<String>,
 }
 
-async fn extract_preference_fields(agent_loop: &AgentLoop, assistant_text: &str) -> ExtractedPreference {
+async fn extract_preference_fields(
+    agent_loop: &AgentLoop,
+    assistant_text: &str,
+) -> ExtractedPreference {
     let system = "Extract a saved preference from the assistant message below. \
         Return ONLY a JSON object with these keys: \
         `slug` (kebab-case ≤30 chars), \
@@ -144,7 +147,8 @@ async fn extract_preference_fields(agent_loop: &AgentLoop, assistant_text: &str)
     );
     let response = agent_loop.cheap_call(system, &user).await;
 
-    if response.starts_with("LLM call failed") || response.starts_with("I'm sorry, all models failed")
+    if response.starts_with("LLM call failed")
+        || response.starts_with("I'm sorry, all models failed")
     {
         warn!("triggers: LLM extraction failed; using assistant message verbatim");
         return ExtractedPreference {
@@ -185,18 +189,42 @@ fn parse_extraction_json(raw: &str) -> Option<ExtractedPreference> {
         // Tolerant fallback via Value parsing.
         let json: Value = serde_json::from_str(cleaned).ok()?;
         Some(ExtractJson {
-            slug: json.get("slug").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            scope: json.get("scope").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            slug: json
+                .get("slug")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            scope: json
+                .get("scope")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             keywords: json
                 .get("keywords")
                 .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default(),
-            summary: json.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            body: json.get("body").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            summary: json
+                .get("summary")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            body: json
+                .get("body")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
         })
     })?;
-    let slug = if parsed.slug.is_empty() { "memo".to_string() } else { sanitize_slug(&parsed.slug) };
+    let slug = if parsed.slug.is_empty() {
+        "memo".to_string()
+    } else {
+        sanitize_slug(&parsed.slug)
+    };
     let body = if parsed.body.is_empty() {
         // No body extracted — fall through to caller's verbatim path.
         return None;
@@ -206,8 +234,16 @@ fn parse_extraction_json(raw: &str) -> Option<ExtractedPreference> {
     Some(ExtractedPreference {
         slug,
         body,
-        scope: if parsed.scope.is_empty() { None } else { Some(parsed.scope) },
-        summary: if parsed.summary.is_empty() { None } else { Some(parsed.summary) },
+        scope: if parsed.scope.is_empty() {
+            None
+        } else {
+            Some(parsed.scope)
+        },
+        summary: if parsed.summary.is_empty() {
+            None
+        } else {
+            Some(parsed.summary)
+        },
         keywords: parsed.keywords,
     })
 }
@@ -275,8 +311,7 @@ pub fn acknowledgement_message(path: &Path, root_dir: &Path) -> String {
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| path.display().to_string());
     format!(
-        "Saved as preference at `{}` (active). Will sync to AKW within the hour. \
-         Edit or remove the file directly to revise.",
+        "Saved as preference at `{}` (active). Edit or remove the file directly to revise.",
         display
     )
 }

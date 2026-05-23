@@ -25,7 +25,7 @@ Before any tool calls, restate the question in one sentence and list the sub-que
 
 ## 2. Check existing knowledge first
 
-If the AKW MCP is available, call `mcp_akw__memory_search(query="<topic>")` before reaching for the open web. Past sessions, curated notes, and prior reports often answer the question or constrain the search.
+Check local prior work before reaching for the open web when relevant. Past session summaries, notes, and prior reports often answer the question or constrain the search.
 
 ## 3. Plan sources, then fetch
 
@@ -58,7 +58,7 @@ Use this skeleton:
 
 ## 6. Save provenance
 
-If AKW is available, write the draft via `mcp_akw__memory_create(path="1_drafts/2_knowledges/<topic>.md", ...)` so future tasks can find it. Otherwise save under `workspace/research/`.
+Save durable research output under `data/drafts/researches/` for task-owned drafts or `data/drafts/notes/` for ad-hoc notes.
 
 ## Rules
 

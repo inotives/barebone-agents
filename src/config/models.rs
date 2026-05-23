@@ -35,8 +35,7 @@ impl ModelRegistry {
     pub fn load(path: &Path) -> Result<Self, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read models config at {}: {}", path.display(), e))?;
-        serde_yaml::from_str(&content)
-            .map_err(|e| format!("Failed to parse models config: {}", e))
+        serde_yaml::from_str(&content).map_err(|e| format!("Failed to parse models config: {}", e))
     }
 
     /// Find a model by its registry ID.
@@ -133,7 +132,10 @@ models:
         let registry = ModelRegistry::load(&path).unwrap();
 
         let nvidia = registry.get("nvidia-minimax").unwrap();
-        assert_eq!(nvidia.base_url.as_deref(), Some("https://integrate.api.nvidia.com/v1"));
+        assert_eq!(
+            nvidia.base_url.as_deref(),
+            Some("https://integrate.api.nvidia.com/v1")
+        );
         assert_eq!(nvidia.temperature, Some(0.7));
 
         let claude = registry.get("claude-sonnet-4").unwrap();

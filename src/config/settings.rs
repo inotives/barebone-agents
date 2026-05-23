@@ -21,8 +21,6 @@ pub struct Settings {
     pub platform_name: String,
     pub delegation_enabled: bool,
     // ---------- EP-00015 ----------
-    /// Background pusher interval in seconds (Decision A2). 0 disables.
-    pub akw_push_interval: u32,
     /// Preference selector min keyword overlap hits (Decision A).
     pub prefs_min_match_hits: u32,
     /// Preference selector total token budget (Decision A).
@@ -66,7 +64,6 @@ impl Settings {
             heartbeat_interval: env_or_parse(&env, "HEARTBEAT_INTERVAL", 60),
             platform_name: env_or(&env, "PLATFORM_NAME", "barebone-agent"),
             delegation_enabled: env_or_parse(&env, "DELEGATION_ENABLED", false),
-            akw_push_interval: env_or_parse(&env, "AKW_PUSH_INTERVAL", 3600),
             prefs_min_match_hits: env_or_parse(&env, "PREFS_MIN_MATCH_HITS", 2),
             prefs_token_budget: env_or_parse(&env, "PREFS_TOKEN_BUDGET", 4000),
             prior_work_top_k: env_or_parse(&env, "PRIOR_WORK_TOP_K", 3),
@@ -109,9 +106,7 @@ fn env_or(env: &HashMap<String, String>, key: &str, default: &str) -> String {
 }
 
 fn env_or_parse<T: std::str::FromStr>(env: &HashMap<String, String>, key: &str, default: T) -> T {
-    env.get(key)
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
+    env.get(key).and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
 #[cfg(test)]

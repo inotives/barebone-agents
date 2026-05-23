@@ -3,8 +3,8 @@ use std::path::Path;
 use serde_json::json;
 
 use crate::cli::ConfigCommand;
-use crate::config::{AgentConfig, ModelRegistry};
 use crate::config::settings::agent_dir;
+use crate::config::{AgentConfig, ModelRegistry};
 use crate::discover_agents;
 
 #[derive(Debug)]
@@ -102,10 +102,7 @@ fn run_validate(root_dir: &Path, as_json: bool) -> Result<(), String> {
                         checks.push(Check {
                             component: format!("agents/{} model", name),
                             status: Status::Error,
-                            message: format!(
-                                "Model '{}' not found in models.yml",
-                                config.model
-                            ),
+                            message: format!("Model '{}' not found in models.yml", config.model),
                         });
                     }
 
@@ -115,10 +112,7 @@ fn run_validate(root_dir: &Path, as_json: bool) -> Result<(), String> {
                             checks.push(Check {
                                 component: format!("agents/{} fallback", name),
                                 status: Status::Warn,
-                                message: format!(
-                                    "Fallback model '{}' not found in models.yml",
-                                    fb
-                                ),
+                                message: format!("Fallback model '{}' not found in models.yml", fb),
                             });
                         }
                     }

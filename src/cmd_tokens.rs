@@ -39,10 +39,12 @@ fn run_summary(
         let arr: Vec<_> = agents
             .iter()
             .map(|a| {
-                let usage = db.get_token_usage(a, since).unwrap_or(crate::db::DbTokenUsage {
-                    input_tokens: 0,
-                    output_tokens: 0,
-                });
+                let usage = db
+                    .get_token_usage(a, since)
+                    .unwrap_or(crate::db::DbTokenUsage {
+                        input_tokens: 0,
+                        output_tokens: 0,
+                    });
                 json!({
                     "agent": a,
                     "period": period.label(),
@@ -62,10 +64,12 @@ fn run_summary(
         );
         println!("{}", "-".repeat(56));
         for a in &agents {
-            let usage = db.get_token_usage(a, since).unwrap_or(crate::db::DbTokenUsage {
-                input_tokens: 0,
-                output_tokens: 0,
-            });
+            let usage = db
+                .get_token_usage(a, since)
+                .unwrap_or(crate::db::DbTokenUsage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                });
             println!(
                 "{:<12} {:>14} {:>14} {:>14}",
                 a,
@@ -128,11 +132,7 @@ fn run_by_model(
     Ok(())
 }
 
-fn run_by_day(
-    db: &Database,
-    agent: Option<&str>,
-    as_json: bool,
-) -> Result<(), String> {
+fn run_by_day(db: &Database, agent: Option<&str>, as_json: bool) -> Result<(), String> {
     let rows = db.get_token_usage_by_day(agent, 30)?;
 
     if as_json {
@@ -153,7 +153,9 @@ fn run_by_day(
     } else {
         println!(
             "Token usage by day{}",
-            agent.map(|a| format!(" (agent: {})", a)).unwrap_or_default()
+            agent
+                .map(|a| format!(" (agent: {})", a))
+                .unwrap_or_default()
         );
         println!();
         println!(
@@ -181,19 +183,59 @@ mod tests {
     fn setup() -> Database {
         let db = Database::open_in_memory().unwrap();
         db.save_message(
-            "c1", "ino", "user", "hi", "cli", Some("model-a"), 100, 0, "t1", true, None,
+            "c1",
+            "ino",
+            "user",
+            "hi",
+            "cli",
+            Some("model-a"),
+            100,
+            0,
+            "t1",
+            true,
+            None,
         )
         .unwrap();
         db.save_message(
-            "c1", "ino", "assistant", "hello", "cli", Some("model-a"), 0, 200, "t1", true, None,
+            "c1",
+            "ino",
+            "assistant",
+            "hello",
+            "cli",
+            Some("model-a"),
+            0,
+            200,
+            "t1",
+            true,
+            None,
         )
         .unwrap();
         db.save_message(
-            "c2", "robin", "user", "hey", "cli", Some("model-b"), 50, 0, "t2", true, None,
+            "c2",
+            "robin",
+            "user",
+            "hey",
+            "cli",
+            Some("model-b"),
+            50,
+            0,
+            "t2",
+            true,
+            None,
         )
         .unwrap();
         db.save_message(
-            "c2", "robin", "assistant", "yo", "cli", Some("model-b"), 0, 150, "t2", true, None,
+            "c2",
+            "robin",
+            "assistant",
+            "yo",
+            "cli",
+            Some("model-b"),
+            0,
+            150,
+            "t2",
+            true,
+            None,
         )
         .unwrap();
         db
@@ -202,13 +244,27 @@ mod tests {
     #[test]
     fn test_summary() {
         let db = setup();
-        run_summary(&db, None, None, &TokenPeriod::parse("total").unwrap(), false).unwrap();
+        run_summary(
+            &db,
+            None,
+            None,
+            &TokenPeriod::parse("total").unwrap(),
+            false,
+        )
+        .unwrap();
     }
 
     #[test]
     fn test_summary_filtered() {
         let db = setup();
-        run_summary(&db, Some("ino"), None, &TokenPeriod::parse("total").unwrap(), false).unwrap();
+        run_summary(
+            &db,
+            Some("ino"),
+            None,
+            &TokenPeriod::parse("total").unwrap(),
+            false,
+        )
+        .unwrap();
     }
 
     #[test]

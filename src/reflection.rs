@@ -4,7 +4,7 @@
 //! (`agent_conv` scope), increment the per-scope counter. Once the counter
 //! hits the threshold, retrieve the last N artifacts from local sources, run
 //! a structured-output LLM call to detect a pattern, and on hit write a
-//! pending preference draft to `data/drafts/2_knowledges/preferences/`.
+//! pending preference draft to `data/drafts/knowledges/preferences/`.
 //!
 //! Failure modes:
 //! - LLM call returns one of the known failure prefixes → counter is **not**
@@ -24,7 +24,7 @@ use tracing::{debug, info, warn};
 use crate::agent_loop::AgentLoop;
 use crate::db::Database;
 
-const PENDING_DIR: &str = "data/drafts/2_knowledges/preferences";
+const PENDING_DIR: &str = "data/drafts/knowledges/preferences";
 
 #[derive(Debug, Clone, Copy)]
 pub enum ScopeKind {
@@ -116,9 +116,12 @@ pub async fn increment_and_maybe_reflect(
 
     let response = run_reflection_llm(agent_loop, &artifacts).await;
 
-    if response.starts_with("LLM call failed") || response.starts_with("I'm sorry, all models failed")
+    if response.starts_with("LLM call failed")
+        || response.starts_with("I'm sorry, all models failed")
     {
-        warn!("reflection: LLM failure prefix detected; counter NOT reset (will retry on next event)");
+        warn!(
+            "reflection: LLM failure prefix detected; counter NOT reset (will retry on next event)"
+        );
         return ReflectionOutcome {
             counter,
             fired: true,
@@ -186,28 +189,38 @@ struct ReflectionJson {
 
 fn parse_reflection_json(raw: &str) -> Option<ReflectionJson> {
     let cleaned = strip_code_fence(raw);
-    serde_json::from_str::<ReflectionJson>(cleaned).ok().or_else(|| {
-        // Try to be tolerant of extra fields by parsing as Value first.
-        let json: Value = serde_json::from_str(cleaned).ok()?;
-        let pattern_found = json.get("pattern_found")?.as_bool()?;
-        let scope = json.get("scope").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let preference_body = json
-            .get("preference_body")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let evidence_paths = json
-            .get("evidence_paths")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
-            .unwrap_or_default();
-        Some(ReflectionJson {
-            pattern_found,
-            scope,
-            preference_body,
-            evidence_paths,
+    serde_json::from_str::<ReflectionJson>(cleaned)
+        .ok()
+        .or_else(|| {
+            // Try to be tolerant of extra fields by parsing as Value first.
+            let json: Value = serde_json::from_str(cleaned).ok()?;
+            let pattern_found = json.get("pattern_found")?.as_bool()?;
+            let scope = json
+                .get("scope")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let preference_body = json
+                .get("preference_body")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let evidence_paths = json
+                .get("evidence_paths")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(ReflectionJson {
+                pattern_found,
+                scope,
+                preference_body,
+                evidence_paths,
+            })
         })
-    })
 }
 
 fn strip_code_fence(raw: &str) -> &str {
@@ -221,7 +234,7 @@ fn strip_code_fence(raw: &str) -> &str {
 }
 
 fn collect_task_artifacts(root_dir: &Path, task_key: &str) -> Vec<(PathBuf, String)> {
-    let dir = root_dir.join("data/drafts/2_researches");
+    let dir = root_dir.join("data/drafts/researches");
     if !dir.exists() {
         return Vec::new();
     }
@@ -328,10 +341,7 @@ async fn run_reflection_llm(agent_loop: &AgentLoop, artifacts: &[(PathBuf, Strin
     agent_loop.cheap_call(system, &user).await
 }
 
-fn write_pending_preference(
-    root_dir: &Path,
-    parsed: &ReflectionJson,
-) -> Result<PathBuf, String> {
+fn write_pending_preference(root_dir: &Path, parsed: &ReflectionJson) -> Result<PathBuf, String> {
     let scope_slug = if parsed.scope.is_empty() {
         "untagged".to_string()
     } else {
@@ -419,23 +429,47 @@ mod tests {
     #[test]
     fn counter_increment_and_reset() {
         let db = setup_db();
-        let c1 = db.increment_reflection_counter("task_key", "TSK-1", "ino").unwrap();
+        let c1 = db
+            .increment_reflection_counter("task_key", "TSK-1", "ino")
+            .unwrap();
         assert_eq!(c1, 1);
-        let c2 = db.increment_reflection_counter("task_key", "TSK-1", "ino").unwrap();
+        let c2 = db
+            .increment_reflection_counter("task_key", "TSK-1", "ino")
+            .unwrap();
         assert_eq!(c2, 2);
-        db.reset_reflection_counter("task_key", "TSK-1", "ino").unwrap();
-        assert_eq!(db.get_reflection_counter("task_key", "TSK-1", "ino").unwrap(), 0);
+        db.reset_reflection_counter("task_key", "TSK-1", "ino")
+            .unwrap();
+        assert_eq!(
+            db.get_reflection_counter("task_key", "TSK-1", "ino")
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
     fn counter_separate_scopes_are_independent() {
         let db = setup_db();
-        db.increment_reflection_counter("task_key", "TSK-1", "ino").unwrap();
-        db.increment_reflection_counter("task_key", "TSK-2", "ino").unwrap();
-        db.increment_reflection_counter("agent_conv", "_global", "ino").unwrap();
-        assert_eq!(db.get_reflection_counter("task_key", "TSK-1", "ino").unwrap(), 1);
-        assert_eq!(db.get_reflection_counter("task_key", "TSK-2", "ino").unwrap(), 1);
-        assert_eq!(db.get_reflection_counter("agent_conv", "_global", "ino").unwrap(), 1);
+        db.increment_reflection_counter("task_key", "TSK-1", "ino")
+            .unwrap();
+        db.increment_reflection_counter("task_key", "TSK-2", "ino")
+            .unwrap();
+        db.increment_reflection_counter("agent_conv", "_global", "ino")
+            .unwrap();
+        assert_eq!(
+            db.get_reflection_counter("task_key", "TSK-1", "ino")
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.get_reflection_counter("task_key", "TSK-2", "ino")
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.get_reflection_counter("agent_conv", "_global", "ino")
+                .unwrap(),
+            1
+        );
     }
 
     #[test]
@@ -529,7 +563,7 @@ mod tests {
     #[test]
     fn collect_task_artifacts_filters_by_prefix() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let dir = tmp.path().join("data/drafts/2_researches");
+        let dir = tmp.path().join("data/drafts/researches");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("TSK-7-202605030900-x.md"), "---\n---\n\nA").unwrap();
         std::fs::write(dir.join("TSK-7-202605040900-y.md"), "---\n---\n\nB").unwrap();

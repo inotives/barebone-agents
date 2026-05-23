@@ -21,7 +21,7 @@ The harness is the hands and body. LLMs are the brain. Rich functionality (knowl
 - Task and mission management with scheduling
 - Skill system with keyword-matched context injection
 - Local user-preference pool with scope-based selection
-- Local-first artifact storage (research drafts, session summaries, preferences) with optional AKW backup
+- Local-first artifact storage (research drafts, session summaries, preferences)
 - Counter-triggered pattern reflection — agent notices recurring patterns across runs and proposes preferences
 - CLI and Discord channels
 - SQLite-backed conversation history and task persistence
@@ -40,9 +40,7 @@ cd barebone-agents
 
 # Pick the variant that fits your needs:
 ./install.sh                                # base: system deps + rust + build + .env
-./install.sh --with-akw                     # also clone + uv-sync agent-knowledge-wikia
 ./install.sh --with-systemd                 # also write a user systemd unit for ino
-./install.sh --with-akw --with-systemd      # everything
 
 # Non-interactive (CI / scripted):
 ./install.sh --non-interactive
@@ -119,7 +117,7 @@ EOF
 
 # Pre-create the local-first artifact dirs (the harness creates these on demand,
 # but pre-creating makes the layout explicit):
-mkdir -p data/drafts/{2_researches,2_knowledges/preferences,sessions,notes}
+mkdir -p data/drafts/{researches,knowledges/preferences,sessions,notes}
 ```
 
 **5. Validate config**
@@ -128,39 +126,7 @@ mkdir -p data/drafts/{2_researches,2_knowledges/preferences,sessions,notes}
 ./target/release/barebone-agent config validate
 ```
 
-**6. Optional — agent-knowledge MCP server (advanced)**
-
-The harness boots fine without AKW. All EP-00015 hot-path features (preference selection, reflection, draft persistence) are local-only by design.
-
-Set up AKW only if you want one of:
-- Durable backup of your preferences + drafts to a wiki-style store.
-- Automatic prior-work recall in prompts (`memory_search` injects past research into the system prompt under `## Prior Work`).
-- Cross-machine / cross-agent preference sharing.
-
-The AKW repo URL isn't a public default — you provide it. Example flow:
-
-```bash
-# Install uv (Python package manager AKW uses)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"
-
-# Clone AKW alongside this repo (replace <repo-url> with your AKW source)
-cd ..
-git clone <repo-url> agent-knowledge
-cd agent-knowledge
-uv sync
-
-# Edit agents/ino/agent.yml so the akw entry under mcp_servers points at the
-# absolute path of your local AKW checkout. The install.sh --with-akw flag
-# automates this; manually you'd just `sed` or hand-edit.
-```
-
-To enable later via the bootstrap script:
-```bash
-./install.sh --with-akw --akw-repo <repo-url>
-```
-
-**7. Run**
+**6. Run**
 
 ```bash
 ./target/release/barebone-agent run --agent ino                            # interactive REPL + Discord
@@ -169,7 +135,7 @@ To enable later via the bootstrap script:
 ./target/release/barebone-agent --log-level debug run --agent ino          # verbose tracing
 ```
 
-**8. Tests**
+**7. Tests**
 
 ```bash
 cargo test                # all tests (393+)
@@ -197,7 +163,7 @@ cd barebone-agents
 ```bash
 ./install.sh
 ```
-Auto-detects `apt`, installs the Rust toolchain if missing, runs `cargo build --release`, scaffolds `.env`, and creates the runtime dirs. Add `--with-akw` if you want the optional AKW knowledge backend.
+Auto-detects `apt`, installs the Rust toolchain if missing, runs `cargo build --release`, scaffolds `.env`, and creates the runtime dirs.
 
 **4. Add an LLM key**
 `ino`'s fallback chain starts with NVIDIA, so an `NVIDIA_API_KEY` is the easiest:
@@ -263,10 +229,9 @@ barebone-agents/
 │       └── .env                  # Agent-specific credentials
 ├── data/                         # Runtime data (gitignored)
 │   ├── barebone-agent.db         # SQLite (conversations, tasks, counters)
-│   ├── .akw_push_manifest.json   # Local-first pusher state
 │   └── drafts/                   # Local artifact storage
-│       ├── 2_researches/         #   research drafts (task output, opt-in)
-│       ├── 2_knowledges/preferences/  # pending preferences (review-gated)
+│       ├── researches/         #   research drafts (task output, opt-in)
+│       ├── knowledges/preferences/  # pending preferences (review-gated)
 │       ├── sessions/             #   conversation summaries
 │       └── notes/                #   ad-hoc notes
 ├── docs/
@@ -282,18 +247,9 @@ barebone-agents/
 barebone-agent run --agent ino           # run an agent (CLI + Discord)
 barebone-agent run --agent ino -m "..."  # one-shot
 
-# Knowledge pool curation (EP-00013/EP-00014)
-barebone-agent skill {search,pull,list}  # curate AKW skills locally
-barebone-agent role  {search,pull,list}  # curate AKW personas locally
-
 # Local-first memory (EP-00015)
 barebone-agent prefs list                # active + pending preferences
-barebone-agent prefs pull <slug>         # import a pref from AKW
 barebone-agent prefs promote <slug>      # move pending → active
-
-# AKW backup (EP-00015)
-barebone-agent akw push                  # mirror local artifacts to AKW now
-barebone-agent akw status                # diff / dirty count per watched dir
 
 # Status / diagnostics
 barebone-agent status [--agent X]        # dashboard

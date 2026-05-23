@@ -137,7 +137,12 @@ fn run_show(db: &Database, key: &str, as_json: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn run_create(db: &Database, title: &str, description: Option<&str>, as_json: bool) -> Result<(), String> {
+fn run_create(
+    db: &Database,
+    title: &str,
+    description: Option<&str>,
+    as_json: bool,
+) -> Result<(), String> {
     let key = db.create_mission(title, description, Some("cli"))?;
 
     if as_json {

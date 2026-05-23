@@ -10,7 +10,13 @@ pub fn run(db: &Database, cmd: TasksCommand) -> Result<(), String> {
             agent,
             mission,
             json,
-        } => run_list(db, agent.as_deref(), status.as_deref(), mission.as_deref(), json),
+        } => run_list(
+            db,
+            agent.as_deref(),
+            status.as_deref(),
+            mission.as_deref(),
+            json,
+        ),
         TasksCommand::Show { key, json } => run_show(db, &key, json),
         TasksCommand::Create {
             title,
@@ -122,10 +128,7 @@ fn run_show(db: &Database, key: &str, as_json: bool) -> Result<(), String> {
         println!("Title:       {}", task.title);
         println!("Status:      {}", task.status);
         println!("Priority:    {}", task.priority);
-        println!(
-            "Agent:       {}",
-            task.agent_name.as_deref().unwrap_or("-")
-        );
+        println!("Agent:       {}", task.agent_name.as_deref().unwrap_or("-"));
         println!(
             "Mission:     {}",
             task.mission_key.as_deref().unwrap_or("-")
@@ -161,7 +164,15 @@ fn run_create(
     schedule: Option<&str>,
     as_json: bool,
 ) -> Result<(), String> {
-    let key = db.create_task(title, description, mission, agent, schedule, Some(priority), None)?;
+    let key = db.create_task(
+        title,
+        description,
+        mission,
+        agent,
+        schedule,
+        Some(priority),
+        None,
+    )?;
 
     if as_json {
         println!(
@@ -244,8 +255,17 @@ mod tests {
     #[test]
     fn test_create_and_show() {
         let db = setup();
-        run_create(&db, "Test task", Some("A description"), None, None, "high", None, false)
-            .unwrap();
+        run_create(
+            &db,
+            "Test task",
+            Some("A description"),
+            None,
+            None,
+            "high",
+            None,
+            false,
+        )
+        .unwrap();
 
         let tasks = db.list_tasks(None, None, None).unwrap();
         assert_eq!(tasks.len(), 1);
@@ -284,7 +304,15 @@ mod tests {
             .create_task("Task", None, None, None, None, Some("low"), None)
             .unwrap();
 
-        run_update(&db, &key, Some("in_progress"), Some("high"), Some("ino"), false).unwrap();
+        run_update(
+            &db,
+            &key,
+            Some("in_progress"),
+            Some("high"),
+            Some("ino"),
+            false,
+        )
+        .unwrap();
 
         let task = db.get_task(&key).unwrap().unwrap();
         assert_eq!(task.status, "in_progress");

@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::process::Command;
@@ -36,10 +36,7 @@ async fn shell_execute(workspace: &PathBuf, args: Value) -> String {
         Some(c) => c.to_string(),
         None => return "Error: 'command' parameter required".to_string(),
     };
-    let timeout_secs = args
-        .get("timeout")
-        .and_then(|t| t.as_u64())
-        .unwrap_or(30);
+    let timeout_secs = args.get("timeout").and_then(|t| t.as_u64()).unwrap_or(30);
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(timeout_secs),
