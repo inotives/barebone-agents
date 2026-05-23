@@ -8,7 +8,7 @@
 //! one extra wrinkle: any preference with `scope: global` is always included
 //! regardless of keyword match (cheap baseline like personal style rules).
 //!
-//! Pending preferences live at `data/drafts/2_knowledges/preferences/` and are
+//! Pending preferences live at `data/drafts/knowledges/preferences/` and are
 //! intentionally NOT read by this module — they're review-gated and only enter
 //! the active pool after `barebone-agent prefs promote`.
 
@@ -32,10 +32,9 @@ pub struct Preference {
 }
 
 const STOPWORDS: &[&str] = &[
-    "a", "an", "and", "or", "the", "to", "of", "in", "on", "at", "by", "for",
-    "is", "are", "was", "were", "be", "been", "being", "do", "does", "did",
-    "has", "have", "had", "i", "you", "we", "they", "it", "this", "that",
-    "with", "from", "as", "but", "if", "then", "so", "not",
+    "a", "an", "and", "or", "the", "to", "of", "in", "on", "at", "by", "for", "is", "are", "was",
+    "were", "be", "been", "being", "do", "does", "did", "has", "have", "had", "i", "you", "we",
+    "they", "it", "this", "that", "with", "from", "as", "but", "if", "then", "so", "not",
 ];
 
 fn tokenize_message(s: &str) -> HashSet<String> {
@@ -98,7 +97,10 @@ fn parse_preference(slug: &str, raw: &str) -> Preference {
         if let Some(end) = rest.find("\n---\n") {
             let fm = &rest[..end];
             let body_start = end + "\n---\n".len();
-            (Some(fm), rest[body_start..].trim_start_matches('\n').to_string())
+            (
+                Some(fm),
+                rest[body_start..].trim_start_matches('\n').to_string(),
+            )
         } else {
             (None, raw.to_string())
         }
@@ -444,7 +446,11 @@ mod tests {
         std::fs::create_dir_all(&pool_dir).unwrap();
         write_pref(&pool_dir, "real", "---\nscope: x\n---\n\nbody");
         // Hidden / template — must be skipped.
-        std::fs::write(pool_dir.join(".template.md"), "---\nscope: y\n---\n\ntemplate").unwrap();
+        std::fs::write(
+            pool_dir.join(".template.md"),
+            "---\nscope: y\n---\n\ntemplate",
+        )
+        .unwrap();
 
         let pool = load_preference_pool(&pool_dir);
         assert_eq!(pool.len(), 1);

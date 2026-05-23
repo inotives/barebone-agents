@@ -49,7 +49,7 @@ html2text = "0.14"
 # UUID (for tool call IDs)
 uuid = { version = "1", features = ["v4"] }
 
-# SHA-256 (for AKW push manifest diff)
+# SHA-256
 sha2 = "0.10"
 
 # Discord bot

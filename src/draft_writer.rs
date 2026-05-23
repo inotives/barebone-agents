@@ -1,8 +1,7 @@
 //! Research / report draft persistence (EP-00015 Decision E).
 //!
-//! Writes task output to `data/drafts/2_researches/<task_key>-<YYYYMMDDHHMM>-<slug>.md`
-//! when a task has `metadata.persist_as_draft: true`. The pusher (Decision A2)
-//! mirrors it to AKW on its next cycle — this module never calls AKW directly.
+//! Writes task output to `data/drafts/researches/<task_key>-<YYYYMMDDHHMM>-<slug>.md`
+//! when a task has `metadata.persist_as_draft: true`.
 
 use std::path::{Path, PathBuf};
 
@@ -12,7 +11,7 @@ use tracing::{debug, info, warn};
 use crate::agent_loop::AgentLoop;
 use crate::db::Task;
 
-const DRAFT_DIR: &str = "data/drafts/2_researches";
+const DRAFT_DIR: &str = "data/drafts/researches";
 const SLUG_MAX: usize = 40;
 
 /// Persist a task's result as a local research draft. No-op if the file
@@ -103,7 +102,11 @@ struct DraftFields {
 /// raw result. Falls back to the raw result as the body if the LLM call fails
 /// or returns un-parseable JSON — we never want a draft write to fail because
 /// the summarization model misbehaved.
-async fn extract_draft_fields(agent_loop: &AgentLoop, task_title: &str, result: &str) -> DraftFields {
+async fn extract_draft_fields(
+    agent_loop: &AgentLoop,
+    task_title: &str,
+    result: &str,
+) -> DraftFields {
     let system = "You produce JSON metadata for archived research drafts. \
         Return ONLY a JSON object with these keys: \
         `title` (string, ≤80 chars), `summary` (string, ≤200 chars), \
@@ -119,7 +122,8 @@ async fn extract_draft_fields(agent_loop: &AgentLoop, task_title: &str, result: 
 
     let response = agent_loop.cheap_call(system, &user).await;
 
-    if response.starts_with("LLM call failed") || response.starts_with("I'm sorry, all models failed")
+    if response.starts_with("LLM call failed")
+        || response.starts_with("I'm sorry, all models failed")
     {
         warn!("draft_writer: LLM call failed, using raw result as body");
         return DraftFields {
@@ -145,8 +149,15 @@ fn parse_draft_json(raw: &str) -> Option<DraftFields> {
     // Tolerate code-fence wrapping just in case.
     let cleaned = strip_code_fence(raw);
     let json: Value = serde_json::from_str(cleaned).ok()?;
-    let title = json.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let summary = json.get("summary").and_then(|v| v.as_str()).map(String::from);
+    let title = json
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let summary = json
+        .get("summary")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let tags = json
         .get("tags")
         .and_then(|v| v.as_array())
@@ -156,7 +167,11 @@ fn parse_draft_json(raw: &str) -> Option<DraftFields> {
                 .collect()
         })
         .unwrap_or_default();
-    let body = json.get("body").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let body = json
+        .get("body")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     if title.is_empty() && body.is_empty() {
         return None;
     }

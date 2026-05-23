@@ -17,10 +17,10 @@
 - Keep generic MCP support intact for non-AKW MCP servers.
 
 ## Implementation Status
-- [ ] Step 1 — Remove default AKW configuration and installer/docs setup references.
-- [ ] Step 2 — Remove AKW runtime pusher and AKW-specific CLI command surface while keeping local-only preferences/drafts.
-- [ ] Step 3 — Rename local draft paths from `2_*` AKW naming to `researches` and `knowledges`, including docs and migration behavior.
-- [ ] Step 4 — Remove unused AKW code/modules and update specs/project structure.
-- [ ] Step 5 — Verify with `cargo test`, `config validate`, and one-shot smoke test.
+- [x] Step 1 — Remove default AKW configuration and installer/docs setup references.
+- [x] Step 2 — Remove AKW runtime pusher and AKW-specific CLI command surface while keeping local-only preferences/drafts.
+- [x] Step 3 — Rename local draft paths from `2_*` AKW naming to `researches` and `knowledges`, including docs and migration behavior.
+- [x] Step 4 — Remove unused AKW code/modules and update specs/project structure.
+- [x] Step 5 — Verify with `cargo test`, `config validate`, and one-shot smoke test.
 
-## Status: IN PROGRESS
+## Status: IN REVIEW

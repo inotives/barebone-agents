@@ -106,7 +106,7 @@ GITHUB_TOKEN=...
 | `MAX_TOOL_ITERATIONS` | int | `10` | Max tool-call loop iterations |
 | `TOOL_RESULT_MAX_CHARS` | int | `5000` | Truncation limit for tool results sent to LLM |
 | `WORKSPACE_DIR` | string | `./workspace` | Sandbox dir for file/shell tools |
-| `SESSION_FALLBACK_DIR` | string | `./data/sessions` | Local fallback when AKW unavailable |
+| `SESSION_FALLBACK_DIR` | string | `./data/sessions` | Reserved local session fallback directory |
 | `SUBAGENT_MAX_PARALLEL` | int | `3` | Max concurrent sub-agents |
 | `SUBAGENT_SLEEP_BETWEEN_SECS` | float | `5.0` | Rate limit sleep between sub-agent iterations |
 | `SKILLS_DIR` | string | `./skills` | Skills directory |
@@ -114,7 +114,6 @@ GITHUB_TOKEN=...
 | `SKILLS_MIN_MATCH_HITS` | int | `2` | Min keyword overlaps for skill match |
 | `HEARTBEAT_INTERVAL` | int | `60` | Seconds between heartbeat cycles |
 | `PLATFORM_NAME` | string | `inotagent` | Platform identifier |
-| `AKW_PUSH_INTERVAL` | int | `3600` | EP-00015 — background AKW pusher interval. `0` disables. |
 | `PREFS_MIN_MATCH_HITS` | int | `2` | EP-00015 — preference selector keyword overlap threshold |
 | `PREFS_TOKEN_BUDGET` | int | `4000` | EP-00015 — preference selector total token budget |
 | `PRIOR_WORK_TOP_K` | int | `3` | EP-00015 — prior-work search top hits per segment |
@@ -178,8 +177,9 @@ skills:                                # Equipped skills from library/
   - architecture_decisions
 
 mcp_servers:                           # External MCP server connections
-  - name: akw
-    command: agent-knowledge-server
+  - name: github
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
   - name: github
     command: npx
     args: ["-y", "@modelcontextprotocol/server-github"]
@@ -522,7 +522,7 @@ async fn run(
 ### 6.2 Full Message Flow
 
 ```
-1.  _ensure_akw_group(conv_id, channel_type, task_key, mission_key)
+1.  Ensure a local session exists for `conversation_id`
 2.  Generate turn_id = "turn-{uuid[:8]}"
 3.  Load history (last 20 is_final=1 messages)
 4.  Save user message (is_final=1)
@@ -530,7 +530,7 @@ async fn run(
       a. Base = AGENT.md content
       b. += Global skills (always)
       c. += Matched skills (keyword match against agent's equipped pool)
-      d. += AKW knowledge context (recommended_context from group_start)
+      d. += User preferences selected from agents/_preferences
       e. += Parent conversation context (if chained, last 5 messages)
       f. += Cross-agent @mention context (recent tasks + messages)
 6.  Truncate history to fit context window (chars/4 heuristic)
@@ -545,69 +545,29 @@ async fn run(
       d. Call LLM again
       e. Increment iteration
 9.  Save final assistant response (is_final=1) with token usage
-10. Log turn to AKW group (request[:500], response[:500])
-11. If channel_type == "task": End task group segment
-12. Return response content
+10. Return response content
 ```
 
-### 6.3 Two-Slot AKW Group Design
+### 6.3 Local Session Lifecycle
 
-Two independent group slots prevent task groups from fragmenting conversations:
+`SessionManager` tracks active local conversation sessions keyed by
+`conversation_id`. SQLite is the canonical turn store. On shutdown, non-task
+sessions are summarized into markdown under `data/drafts/sessions/`; task
+channels use task results and optional research drafts instead of session
+summary drafts.
 
-```rust
-struct SessionSlot {
-    group_id: Option<String>,       // AKW group ID (None if fallback)
-    conv_id: Option<String>,        // Conversation ID when group started
-    context: Vec<String>,           // Recommended context from AKW
-    fallback_path: Option<PathBuf>, // Local .md file path
-    turn_count: u32,                // For fallback numbering
-}
-```
-
-- **`akw_conv_session`** — for CLI/Discord conversations
-- **`akw_task_session`** — for heartbeat task executions
-
-**Slot selection**: `channel_type == "task" → task_session`, otherwise `conv_session`
-
-**Group rotation**: When `conversation_id` changes from `slot.conv_id`, close old group segment and start new one.
-
-### 6.4 AKW Group Lifecycle
-
-AKW persistence is keyed on a "group" — one logical unit of work — with multiple segments over time. We map our conversations onto groups.
-
-1. **Start**: `mcp_akw__group_start({agent, metadata: {conv_id, channel, project_id}})`
-   - On success: Store `group_id`, cache `recommended_context`
-   - On failure: Create local markdown fallback file
-2. **Log turns**: After each run, call `mcp_akw__group_log({request, response})` — keys onto the active group internally
-3. **End**: On conversation change or shutdown, call `mcp_akw__group_end({})` — closes the active segment
-
-**Fallback file format**:
-```markdown
----
-group_type: conversation
-agent: ino
-channel: cli
-conv_id: cli-ino-abc12345
-started_at: 2026-04-21T12:00:00Z
----
-
-## Turn 1
-**Request:** (truncated to 500 chars)
-**Response:** (truncated to 500 chars)
-```
-
-### 6.5 Context Injection
+### 6.4 Context Injection
 
 Appended to system prompt in order:
 
 1. **Core skills** (`config/skills/*.md`) — always-injected. Loaded at startup; restart to reload.
 2. **Equipped skills** (`agents/_skills/*.md`) — task-matched from a hot-reloaded local pool. Tokenizer scores each file by keyword + body word match against the user message, drops entries below `SKILLS_MIN_MATCH_HITS`, packs top scorers into `SKILLS_TOKEN_BUDGET` (file granularity). Header: `## Equipped Skills`.
-3. **AKW skills** — fires only when the local Equipped pool returns zero matches. Calls `mcp_akw__skill_search(query=<message>)`, top 3 paths fetched via `mcp_akw__memory_read`. Header: `## AKW Skills`.
-4. **AKW knowledge** — `recommended_context` from `group_start()` (cached per group).
+3. **User preferences** — selected from `agents/_preferences/*.md`.
+4. **Prior work** — reserved for local prior-work search.
 5. **Parent conversation** — last 5 messages from parent conv (if chained).
 6. **Cross-agent @mentions** — recent tasks + messages from mentioned agents.
 
-### 6.6 Cross-Agent Context
+### 6.5 Cross-Agent Context
 
 **Detection**: Regex `@(\w+)` in message → validate against registered agents, exclude self
 
@@ -766,7 +726,7 @@ source: optional-attribution
 
 1. **`task_management.md`** (~550 tokens) — Task creation, delegation, lifecycle, priority guide
 2. **`adventurer_runbook.md`** (~800 tokens) — Communication style, workflow routing, idle behavior
-3. **`knowledge_management.md`** (~1100 tokens) — AKW search/save/research lifecycle
+3. **`knowledge_management.md`** (~1100 tokens) — Local knowledge and research workflow
 
 ### 8.4 Skill Injection Flow
 
@@ -941,7 +901,7 @@ Templates in `agents/_roles/`. Each defines persona rules and optional `auto_ski
 Reverse order:
 1. Stop heartbeats
 2. Stop channels
-3. Close AKW sessions (both slots per agent)
+3. Flush local session drafts
 4. Close MCP loaders
 5. Close WebFetcher
 6. Close LLM clients
@@ -955,7 +915,6 @@ Reverse order:
 |---|---|
 | **LLM calls** | Fallback chain, return error message to user if all fail |
 | **Tool execution** | Catch all errors, return error text (never crash loop) |
-| **AKW sessions** | Fall back to local markdown files |
 | **MCP servers** | Failed servers logged, don't block others |
 | **DB operations** | Log errors, return error messages |
 | **Heartbeat tasks** | Mark task as blocked with error, continue cycle |
@@ -1037,19 +996,17 @@ Reverse order:
 
 The full design is in `docs/EP-00015_20260503_memory-aware-task-and-reflection-loop.md`. Quick reference:
 
-**Architectural baseline**: every agent-produced artifact lands on the local filesystem first. AKW (and any future memory-MCP module) is durable backup, mirrored by a single artifact-agnostic background pusher. The agent's hot path never reads from AKW for selection — it reads only local files. AKW reads (`recommended_context`, prior-work search) are *enrichment* that augments the prompt when available and degrades silently when not.
+**Architectural baseline**: every agent-produced artifact lands on the local filesystem first. The agent hot path reads local files and SQLite only.
 
-### 18.1 Watched artifact mappings
+### 18.1 Local artifact paths
 
-| Artifact | Local canonical path | AKW backup path |
-|---|---|---|
-| Active preferences | `agents/_preferences/<slug>.md` | `2_knowledges/preferences/<slug>.md` |
-| Pending preferences | `data/drafts/2_knowledges/preferences/<slug>.md` | `1_drafts/2_knowledges/preferences/<slug>.md` |
-| Research drafts | `data/drafts/2_researches/<task_key>-<YYYYMMDDHHMM>-<slug>.md` | `1_drafts/2_researches/<file>.md` |
-| Session summaries | `data/drafts/sessions/<group_first_8>-<segment_compact_iso>.md` | `1_drafts/sessions/<file>.md` |
-| Ad-hoc note drafts | `data/drafts/notes/<slug>.md` | `1_drafts/notes/<file>.md` |
-
-The pusher's manifest (`data/.akw_push_manifest.json`) tracks `local_path → {sha256, last_pushed_at, akw_path}`. Gitignored.
+| Artifact | Local canonical path |
+|---|---|
+| Active preferences | `agents/_preferences/<slug>.md` |
+| Pending preferences | `data/drafts/knowledges/preferences/<slug>.md` |
+| Research drafts | `data/drafts/researches/<task_key>-<YYYYMMDDHHMM>-<slug>.md` |
+| Session summaries | `data/drafts/sessions/<segment_compact_iso>.md` |
+| Ad-hoc note drafts | `data/drafts/notes/<slug>.md` |
 
 ### 18.2 System prompt block order (Decision J2)
 
@@ -1058,9 +1015,9 @@ Pinned in `agent_loop::build_system_prompt`:
 1. Character sheet
 2. `## User Preferences` (selected per task/segment, cached on `ActiveSession`)
 3. Core skills
-4. Equipped / AKW-fallback skills
-5. `## Project Context` (`recommended_context` from `mcp_akw__group_start`)
-6. `## Prior Work` (harness-driven `memory_search` against task title/description)
+4. Equipped skills
+5. `## Project Context` (reserved for local/project context)
+6. `## Prior Work` (reserved for local prior-work search)
 7. `## Previous Run Result` (recurring tasks only)
 8. Cross-agent `@mention` context
 9. Parent conversation context
@@ -1074,9 +1031,8 @@ Two scopes per agent: `task_key` (per recurring task) and `agent_conv` (one buck
 - `task_key` increments on `complete_task` success in `scheduler::execute_task` (skipped for `metadata.system: true` tasks).
 - `agent_conv` increments on segment-end in `flush_session_drafts` (skipped for task channels).
 
-On hit: retrieve last N artifacts from `data/drafts/2_researches/` (task_key) or `data/drafts/sessions/` (agent_conv), run a structured-output LLM call. On `pattern_found=true`, write a pending preference to `data/drafts/2_knowledges/preferences/`. On LLM failure-prefix, counter is **not** reset (next event retries).
+On hit: retrieve last N artifacts from `data/drafts/researches/` (task_key) or `data/drafts/sessions/` (agent_conv), run a structured-output LLM call. On `pattern_found=true`, write a pending preference to `data/drafts/knowledges/preferences/`. On LLM failure-prefix, counter is **not** reset (next event retries).
 
 ### 18.4 CLI
 
-- `barebone-agent akw push` / `akw status` — generic pusher control.
-- `barebone-agent prefs list | pull <slug> | promote <slug>` — preference-specific. `promote` also issues `mcp_akw__memory_delete` on the corresponding AKW draft (Q8 resolution; best-effort on AKW unavailability).
+- `barebone-agent prefs list | promote <slug>` — preference-specific local pool management.

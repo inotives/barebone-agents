@@ -14,9 +14,6 @@ pub struct AgentConfig {
     pub skills: Vec<String>,
     #[serde(default)]
     pub mcp_servers: Vec<McpServerConfig>,
-    /// Enable dynamic skill loading from AKW MCP per task.
-    #[serde(default)]
-    pub akw_skills: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -61,10 +58,7 @@ impl McpServerConfig {
             .map(|(k, v)| {
                 let resolved = if v.starts_with("${") && v.ends_with('}') {
                     let var_name = &v[2..v.len() - 1];
-                    merged_env
-                        .get(var_name)
-                        .cloned()
-                        .unwrap_or_default()
+                    merged_env.get(var_name).cloned().unwrap_or_default()
                 } else {
                     v.clone()
                 };
@@ -80,16 +74,20 @@ impl AgentConfig {
         let path = agent_dir.join("agent.yml");
         let content = std::fs::read_to_string(&path)
             .map_err(|e| format!("Failed to read agent config at {}: {}", path.display(), e))?;
-        serde_yaml::from_str(&content)
-            .map_err(|e| format!("Failed to parse agent config: {}", e))
+        serde_yaml::from_str(&content).map_err(|e| format!("Failed to parse agent config: {}", e))
     }
 }
 
 /// Load the agent's character sheet (AGENT.md) with template variable substitution.
 pub fn load_character_sheet(agent_dir: &Path, agent_name: &str) -> Result<String, String> {
     let path = agent_dir.join("AGENT.md");
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read character sheet at {}: {}", path.display(), e))?;
+    let content = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "Failed to read character sheet at {}: {}",
+            path.display(),
+            e
+        )
+    })?;
     Ok(content.replace("{{AGENT_NAME}}", agent_name))
 }
 

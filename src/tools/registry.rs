@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -6,9 +6,8 @@ use std::sync::Arc;
 use tracing::{debug, error};
 
 /// Async handler type for tool execution.
-pub type ToolHandler = Arc<
-    dyn Fn(Value) -> Pin<Box<dyn Future<Output = String> + Send>> + Send + Sync,
->;
+pub type ToolHandler =
+    Arc<dyn Fn(Value) -> Pin<Box<dyn Future<Output = String> + Send>> + Send + Sync>;
 
 pub struct ToolDef {
     pub name: String,

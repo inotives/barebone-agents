@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use regex::Regex;
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::debug;
 
 use super::types::{LLMClient, LLMMessage, LLMResponse, TokenUsage, ToolCall};

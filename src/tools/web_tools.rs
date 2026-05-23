@@ -1,5 +1,5 @@
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -105,10 +105,7 @@ async fn web_search(client: &Client, args: Value, max_chars: usize) -> String {
         .unwrap_or(5) as usize;
 
     // Use DuckDuckGo HTML search (no API key required)
-    let url = format!(
-        "https://html.duckduckgo.com/html/?q={}",
-        urlencoded(query)
-    );
+    let url = format!("https://html.duckduckgo.com/html/?q={}", urlencoded(query));
 
     let resp = match client
         .get(&url)
@@ -164,8 +161,7 @@ async fn web_fetch(client: &Client, args: Value, max_chars: usize) -> String {
     };
 
     // Convert HTML to readable text
-    let text = html2text::from_read(html.as_bytes(), 80)
-        .unwrap_or_else(|_| html.clone());
+    let text = html2text::from_read(html.as_bytes(), 80).unwrap_or_else(|_| html.clone());
 
     let output = format!("Status: {}\n\n{}", status, text.trim());
     truncate(&output, max_chars)
@@ -183,10 +179,7 @@ async fn api_request(client: &Client, args: Value, max_chars: usize) -> String {
         .unwrap_or("GET")
         .to_uppercase();
 
-    let timeout_secs = args
-        .get("timeout")
-        .and_then(|t| t.as_u64())
-        .unwrap_or(30);
+    let timeout_secs = args.get("timeout").and_then(|t| t.as_u64()).unwrap_or(30);
 
     let mut req = match method.as_str() {
         "GET" => client.get(url),
@@ -336,10 +329,9 @@ fn urlencoding_decode(text: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(
-                std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""),
-                16,
-            ) {
+            if let Ok(byte) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            {
                 result.push(byte);
                 i += 3;
                 continue;
@@ -373,7 +365,10 @@ mod tests {
 
     #[test]
     fn test_extract_between() {
-        assert_eq!(extract_between("hello [world] end", "[", "]"), Some("world"));
+        assert_eq!(
+            extract_between("hello [world] end", "[", "]"),
+            Some("world")
+        );
         assert_eq!(extract_between("no match", "[", "]"), None);
     }
 

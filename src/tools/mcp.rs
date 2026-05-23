@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -7,8 +7,8 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
-use crate::config::McpServerConfig;
 use super::registry::ToolRegistry;
+use crate::config::McpServerConfig;
 
 const STDERR_TAIL_LINES: usize = 20;
 
@@ -249,13 +249,8 @@ pub async fn load_mcp_servers(
                 match conn.list_tools().await {
                     Ok(tools) => {
                         let allowlist = &config.tools;
-                        let registered = register_mcp_tools(
-                            registry,
-                            &conn.name,
-                            &tools,
-                            allowlist,
-                            &conn,
-                        );
+                        let registered =
+                            register_mcp_tools(registry, &conn.name, &tools, allowlist, &conn);
                         info!(
                             server = %config.name,
                             tools = registered,
@@ -319,30 +314,23 @@ fn register_mcp_tools(
         let request_id = request_id.clone();
         let cn = conn_name.clone();
 
-        registry.register(
-            &full_name,
-            &description,
-            parameters,
-            move |args| {
-                let remote_name = remote_name.clone();
-                let stdin = stdin.clone();
-                let stdout = stdout.clone();
-                let request_id = request_id.clone();
-                let cn = cn.clone();
+        registry.register(&full_name, &description, parameters, move |args| {
+            let remote_name = remote_name.clone();
+            let stdin = stdin.clone();
+            let stdout = stdout.clone();
+            let request_id = request_id.clone();
+            let cn = cn.clone();
 
-                async move {
-                    match mcp_tool_call(&cn, &remote_name, args, &stdin, &stdout, &request_id)
-                        .await
-                    {
-                        Ok(result) => result,
-                        Err(e) => {
-                            error!(tool = %remote_name, error = %e, "MCP tool call failed");
-                            format!("Error: {}", e)
-                        }
+            async move {
+                match mcp_tool_call(&cn, &remote_name, args, &stdin, &stdout, &request_id).await {
+                    Ok(result) => result,
+                    Err(e) => {
+                        error!(tool = %remote_name, error = %e, "MCP tool call failed");
+                        format!("Error: {}", e)
                     }
                 }
-            },
-        );
+            }
+        });
 
         count += 1;
     }
@@ -374,14 +362,20 @@ async fn mcp_tool_call(
         }
     });
 
-    let mut line = serde_json::to_string(&request)
-        .map_err(|e| format!("Failed to serialize: {}", e))?;
+    let mut line =
+        serde_json::to_string(&request).map_err(|e| format!("Failed to serialize: {}", e))?;
     line.push('\n');
 
     {
         let mut stdin = stdin.lock().await;
-        stdin.write_all(line.as_bytes()).await.map_err(|e| format!("Write failed: {}", e))?;
-        stdin.flush().await.map_err(|e| format!("Flush failed: {}", e))?;
+        stdin
+            .write_all(line.as_bytes())
+            .await
+            .map_err(|e| format!("Write failed: {}", e))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|e| format!("Flush failed: {}", e))?;
     }
 
     let mut stdout = stdout.lock().await;
@@ -424,10 +418,7 @@ async fn mcp_tool_call(
     }
 }
 
-fn spawn_stderr_drain(
-    stderr: tokio::process::ChildStderr,
-    buffer: Arc<Mutex<VecDeque<String>>>,
-) {
+fn spawn_stderr_drain(stderr: tokio::process::ChildStderr, buffer: Arc<Mutex<VecDeque<String>>>) {
     tokio::spawn(async move {
         let mut reader = BufReader::new(stderr);
         let mut line = String::new();
@@ -479,10 +470,7 @@ mod tests {
 
     #[test]
     fn test_empty_allowlist_passes_all() {
-        let tools = vec![
-            json!({"name": "a"}),
-            json!({"name": "b"}),
-        ];
+        let tools = vec![json!({"name": "a"}), json!({"name": "b"})];
         let allowlist: Vec<String> = vec![];
 
         let filtered: Vec<&str> = tools

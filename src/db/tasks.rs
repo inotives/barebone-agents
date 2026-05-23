@@ -27,7 +27,7 @@ pub struct TaskMetadata {
     #[serde(default)]
     pub depends_on: Option<Vec<String>>,
     /// EP-00015 Decision E: opt-in flag to persist task output as a research
-    /// draft at `data/drafts/2_researches/<task_key>-<YYYYMMDDHHMM>-<slug>.md`.
+    /// draft at `data/drafts/researches/<task_key>-<YYYYMMDDHHMM>-<slug>.md`.
     /// Default `None` (treated as `false`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persist_as_draft: Option<bool>,
@@ -115,8 +115,7 @@ impl Database {
         let key = self.next_task_key(mission_key)?;
         let status = Self::determine_status(metadata, schedule);
         let priority = priority.unwrap_or("medium");
-        let metadata_json = metadata
-            .map(|m| serde_json::to_string(m).unwrap_or_default());
+        let metadata_json = metadata.map(|m| serde_json::to_string(m).unwrap_or_default());
 
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -345,11 +344,9 @@ impl Database {
 
             let all_done = if let Some(dep_keys) = deps {
                 dep_keys.iter().all(|dk| {
-                    conn.query_row(
-                        "SELECT status FROM tasks WHERE key = ?1",
-                        [dk],
-                        |row| row.get::<_, String>(0),
-                    )
+                    conn.query_row("SELECT status FROM tasks WHERE key = ?1", [dk], |row| {
+                        row.get::<_, String>(0)
+                    })
                     .map(|s| s == "done")
                     .unwrap_or(false)
                 })
@@ -422,10 +419,14 @@ mod tests {
     #[test]
     fn test_create_task_standalone() {
         let db = setup();
-        let key = db.create_task("Test task", None, None, None, None, None, None).unwrap();
+        let key = db
+            .create_task("Test task", None, None, None, None, None, None)
+            .unwrap();
         assert_eq!(key, "TSK-00001");
 
-        let key2 = db.create_task("Second task", None, None, None, None, None, None).unwrap();
+        let key2 = db
+            .create_task("Second task", None, None, None, None, None, None)
+            .unwrap();
         assert_eq!(key2, "TSK-00002");
     }
 
@@ -447,7 +448,9 @@ mod tests {
     #[test]
     fn test_status_backlog_default() {
         let db = setup();
-        let key = db.create_task("Basic task", None, None, None, None, None, None).unwrap();
+        let key = db
+            .create_task("Basic task", None, None, None, None, None, None)
+            .unwrap();
         let task = db.get_task(&key).unwrap().unwrap();
         assert_eq!(task.status, "backlog");
     }
@@ -479,7 +482,9 @@ mod tests {
     #[test]
     fn test_status_blocked_with_depends() {
         let db = setup();
-        let dep_key = db.create_task("Dep task", None, None, None, None, None, None).unwrap();
+        let dep_key = db
+            .create_task("Dep task", None, None, None, None, None, None)
+            .unwrap();
         let meta = TaskMetadata {
             depends_on: Some(vec![dep_key.clone()]),
             ..Default::default()
@@ -501,7 +506,9 @@ mod tests {
     #[test]
     fn test_update_task() {
         let db = setup();
-        let key = db.create_task("Test", None, None, None, None, None, None).unwrap();
+        let key = db
+            .create_task("Test", None, None, None, None, None, None)
+            .unwrap();
         db.update_task(&key, Some("in_progress"), None, Some("ino"), Some("high"))
             .unwrap();
 
@@ -514,9 +521,12 @@ mod tests {
     #[test]
     fn test_list_tasks_with_filters() {
         let db = setup();
-        db.create_task("Task A", None, None, Some("ino"), None, None, None).unwrap();
-        db.create_task("Task B", None, None, Some("robin"), None, None, None).unwrap();
-        db.create_task("Task C", None, None, Some("ino"), None, None, None).unwrap();
+        db.create_task("Task A", None, None, Some("ino"), None, None, None)
+            .unwrap();
+        db.create_task("Task B", None, None, Some("robin"), None, None, None)
+            .unwrap();
+        db.create_task("Task C", None, None, Some("ino"), None, None, None)
+            .unwrap();
 
         let all = db.list_tasks(None, None, None).unwrap();
         assert_eq!(all.len(), 3);
@@ -528,7 +538,9 @@ mod tests {
     #[test]
     fn test_claim_task() {
         let db = setup();
-        let key = db.create_task("Unclaimed", None, None, None, None, None, None).unwrap();
+        let key = db
+            .create_task("Unclaimed", None, None, None, None, None, None)
+            .unwrap();
 
         let claimed = db.claim_task(&key, "ino").unwrap();
         assert!(claimed);
@@ -544,7 +556,9 @@ mod tests {
     #[test]
     fn test_check_unblock() {
         let db = setup();
-        let dep = db.create_task("Dep", None, None, None, None, None, None).unwrap();
+        let dep = db
+            .create_task("Dep", None, None, None, None, None, None)
+            .unwrap();
         let meta = TaskMetadata {
             depends_on: Some(vec![dep.clone()]),
             ..Default::default()
@@ -570,8 +584,11 @@ mod tests {
     #[test]
     fn test_complete_one_time_task() {
         let db = setup();
-        let key = db.create_task("One-time", None, None, None, None, None, None).unwrap();
-        db.update_task(&key, Some("in_progress"), None, None, None).unwrap();
+        let key = db
+            .create_task("One-time", None, None, None, None, None, None)
+            .unwrap();
+        db.update_task(&key, Some("in_progress"), None, None, None)
+            .unwrap();
         db.complete_task(&key, "All done").unwrap();
 
         let task = db.get_task(&key).unwrap().unwrap();
@@ -585,7 +602,8 @@ mod tests {
         let key = db
             .create_task("Recurring", None, None, None, Some("hourly"), None, None)
             .unwrap();
-        db.update_task(&key, Some("in_progress"), None, None, None).unwrap();
+        db.update_task(&key, Some("in_progress"), None, None, None)
+            .unwrap();
         db.complete_task(&key, "Cycle done").unwrap();
 
         let task = db.get_task(&key).unwrap().unwrap();

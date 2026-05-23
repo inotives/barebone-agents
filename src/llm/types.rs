@@ -150,10 +150,7 @@ mod tests {
 
     #[test]
     fn test_truncate_history_fits() {
-        let msgs = vec![
-            LLMMessage::user("short"),
-            LLMMessage::assistant("reply"),
-        ];
+        let msgs = vec![LLMMessage::user("short"), LLMMessage::assistant("reply")];
         let result = truncate_history(&msgs, None, 100000, 8192);
         assert_eq!(result.len(), 2);
     }

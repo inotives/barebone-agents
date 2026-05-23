@@ -35,14 +35,10 @@ pub fn split_message(text: &str, max_len: usize) -> Vec<String> {
         }
 
         // Try to split at the last newline within the limit
-        let split_at = remaining[..max_len]
-            .rfind('\n')
-            .unwrap_or_else(|| {
-                // Fall back to last space
-                remaining[..max_len]
-                    .rfind(' ')
-                    .unwrap_or(max_len)
-            });
+        let split_at = remaining[..max_len].rfind('\n').unwrap_or_else(|| {
+            // Fall back to last space
+            remaining[..max_len].rfind(' ').unwrap_or(max_len)
+        });
 
         chunks.push(remaining[..split_at].to_string());
         remaining = &remaining[split_at..].trim_start();
@@ -78,11 +74,7 @@ fn is_user_allowed(config: &DiscordConfig, user_id: &str) -> bool {
 
 /// Check whether this message requires a bot mention and, if so, whether it has one.
 /// Returns `true` if the message should be processed.
-fn passes_mention_gate(
-    config: &DiscordConfig,
-    msg: &Message,
-    bot_id: serenity::UserId,
-) -> bool {
+fn passes_mention_gate(config: &DiscordConfig, msg: &Message, bot_id: serenity::UserId) -> bool {
     let guild_id = match msg.guild_id {
         Some(id) => id.to_string(),
         None => return true, // DMs always pass

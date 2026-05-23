@@ -15,8 +15,7 @@ impl Database {
                 .map_err(|e| format!("Failed to create db directory: {}", e))?;
         }
 
-        let conn = Connection::open(path)
-            .map_err(|e| format!("Failed to open database: {}", e))?;
+        let conn = Connection::open(path).map_err(|e| format!("Failed to open database: {}", e))?;
 
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .map_err(|e| format!("Failed to set pragmas: {}", e))?;
@@ -55,11 +54,8 @@ impl Database {
     /// Register an agent name in the agents table (upsert).
     pub fn register_agent(&self, name: &str) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT OR IGNORE INTO agents (name) VALUES (?1)",
-            [name],
-        )
-        .map_err(|e| format!("Failed to register agent: {}", e))?;
+        conn.execute("INSERT OR IGNORE INTO agents (name) VALUES (?1)", [name])
+            .map_err(|e| format!("Failed to register agent: {}", e))?;
         Ok(())
     }
 
@@ -121,10 +117,7 @@ impl Database {
     }
 
     /// Get task count per status for a specific mission.
-    pub fn get_mission_task_progress(
-        &self,
-        mission_key: &str,
-    ) -> Result<(i64, i64), String> {
+    pub fn get_mission_task_progress(&self, mission_key: &str) -> Result<(i64, i64), String> {
         let conn = self.conn.lock().unwrap();
         let total: i64 = conn
             .query_row(
@@ -223,10 +216,7 @@ impl Database {
                  FROM conversations \
                  WHERE agent_name = ?1 AND is_final = 1 \
                  ORDER BY id DESC LIMIT ?2",
-                vec![
-                    Box::new(name.to_string()),
-                    Box::new(limit),
-                ],
+                vec![Box::new(name.to_string()), Box::new(limit)],
             ),
             None => (
                 "SELECT created_at, agent_name, channel_type, role, \

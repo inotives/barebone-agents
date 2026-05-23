@@ -20,10 +20,7 @@ pub fn is_due(schedule: &str, last_run_at: Option<&str>) -> bool {
 
     if let Some(time_str) = schedule.strip_prefix("daily@") {
         if let Some(target_time) = parse_time(time_str) {
-            let today_target = now
-                .date_naive()
-                .and_time(target_time)
-                .and_utc();
+            let today_target = now.date_naive().and_time(target_time).and_utc();
             let past_target = now >= today_target;
             let ran_after_target = match parse_last_run(last_run_at) {
                 Some(last) => last >= today_target,
@@ -40,10 +37,9 @@ pub fn is_due(schedule: &str, last_run_at: Option<&str>) -> bool {
             if let (Some(day), Some(target_time)) = (parse_weekday(parts[0]), parse_time(parts[1]))
             {
                 let today = now.weekday();
-                let days_since = (today.num_days_from_monday() as i64
-                    - day.num_days_from_monday() as i64
-                    + 7)
-                    % 7;
+                let days_since =
+                    (today.num_days_from_monday() as i64 - day.num_days_from_monday() as i64 + 7)
+                        % 7;
                 let target_date = now.date_naive() - chrono::Duration::days(days_since);
                 let week_target = target_date.and_time(target_time).and_utc();
 

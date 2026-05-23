@@ -1,14 +1,11 @@
 mod agent_loop;
-mod akw_pusher;
 mod channels;
 mod cli;
 mod cmd_agents;
-mod cmd_akw;
 mod cmd_config;
 mod cmd_conversations;
 mod cmd_missions;
 mod cmd_prefs;
-mod cmd_pull;
 mod cmd_tasks;
 mod cmd_tokens;
 mod config;
@@ -49,14 +46,16 @@ async fn main() {
     let cli = Cli::parse();
 
     let log_level = cli.log_level.as_deref().unwrap_or("info");
-    tracing_subscriber::fmt()
-        .with_env_filter(log_level)
-        .init();
+    tracing_subscriber::fmt().with_env_filter(log_level).init();
 
     info!("barebone-agent v{}", env!("CARGO_PKG_VERSION"));
 
     match cli.command {
-        Commands::Run { agent, all, message } => {
+        Commands::Run {
+            agent,
+            all,
+            message,
+        } => {
             if let Err(e) = run_agents(agent.as_deref(), all, message.as_deref()).await {
                 error!(error = %e, "fatal error");
                 std::process::exit(1);
@@ -106,39 +105,12 @@ async fn main() {
                 std::process::exit(1);
             }
         }
-        Commands::Skill { command } => {
-            let root_dir = std::env::current_dir()
-                .map_err(|e| format!("Failed to get cwd: {}", e))
-                .unwrap();
-            if let Err(e) = cmd_pull::run_skill(&root_dir, command).await {
-                error!(error = %e, "skill error");
-                std::process::exit(1);
-            }
-        }
-        Commands::Role { command } => {
-            let root_dir = std::env::current_dir()
-                .map_err(|e| format!("Failed to get cwd: {}", e))
-                .unwrap();
-            if let Err(e) = cmd_pull::run_role(&root_dir, command).await {
-                error!(error = %e, "role error");
-                std::process::exit(1);
-            }
-        }
         Commands::Prefs { command } => {
             let root_dir = std::env::current_dir()
                 .map_err(|e| format!("Failed to get cwd: {}", e))
                 .unwrap();
             if let Err(e) = cmd_prefs::run(&root_dir, command).await {
                 error!(error = %e, "prefs error");
-                std::process::exit(1);
-            }
-        }
-        Commands::Akw { command } => {
-            let root_dir = std::env::current_dir()
-                .map_err(|e| format!("Failed to get cwd: {}", e))
-                .unwrap();
-            if let Err(e) = cmd_akw::run(&root_dir, command).await {
-                error!(error = %e, "akw error");
                 std::process::exit(1);
             }
         }
@@ -238,7 +210,12 @@ async fn init_agent(
 
     let primary_model = model_registry
         .get(&agent_config.model)
-        .ok_or_else(|| format!("[{}] Primary model '{}' not found in registry", agent_name, agent_config.model))?
+        .ok_or_else(|| {
+            format!(
+                "[{}] Primary model '{}' not found in registry",
+                agent_name, agent_config.model
+            )
+        })?
         .clone();
 
     database.register_agent(agent_name)?;
@@ -282,12 +259,9 @@ async fn init_agent(
     info!(agent = %agent_name, tools = tool_registry.len(), "tool registry initialized");
 
     // Per-agent MCP servers
-    let _mcp_connections = tools::mcp::load_mcp_servers(
-        &agent_config.mcp_servers,
-        &merged_env,
-        &mut tool_registry,
-    )
-    .await;
+    let _mcp_connections =
+        tools::mcp::load_mcp_servers(&agent_config.mcp_servers, &merged_env, &mut tool_registry)
+            .await;
 
     let tool_registry = Arc::new(tool_registry);
 
@@ -312,7 +286,6 @@ async fn init_agent(
         settings.tool_result_max_chars as usize,
         settings.history_limit,
         core_skills.clone(),
-        agent_config.akw_skills,
         root_dir.join("agents").join("_skills"),
         settings.skills_token_budget,
         settings.skills_min_match_hits,
@@ -379,55 +352,6 @@ async fn init_agent(
     })
 }
 
-/// Spawn the EP-00015 generic AKW pusher if AKW is configured.
-///
-/// Returns `Some(handle)` if the pusher was spawned, `None` if AKW is not
-/// configured (local-only mode). The pusher task runs forever on the
-/// configured interval; abort it via `handle.abort()` on shutdown.
-fn spawn_pusher_if_configured(
-    root_dir: &std::path::Path,
-    interval_secs: u32,
-) -> Option<JoinHandle<()>> {
-    if interval_secs == 0 {
-        info!("pusher disabled (AKW_PUSH_INTERVAL=0)");
-        return None;
-    }
-    // Probe AKW config once at boot; if none, run in local-only mode.
-    if let Err(e) = tools::akw_client::resolve_akw_config(root_dir, None) {
-        info!(
-            "AKW MCP not configured — running in local-only mode, push disabled ({})",
-            e
-        );
-        return None;
-    }
-
-    let root = root_dir.to_path_buf();
-    let handle = tokio::spawn(async move {
-        // 30s warm-up before the first cycle (per Decision A2).
-        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-
-        let mappings = akw_pusher::default_mappings();
-        let manifest_path = root.join(akw_pusher::default_manifest_path());
-
-        loop {
-            // Connect lazily per cycle so AKW restarts are tolerated.
-            match tools::akw_client::AkwClient::connect(&root, None).await {
-                Ok(client) => {
-                    let _ = akw_pusher::push_cycle(&client, &mappings, &manifest_path, &root)
-                        .await;
-                    client.shutdown().await;
-                }
-                Err(e) => {
-                    warn!(error = %e, "pusher: AKW unavailable this cycle, will retry");
-                }
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(interval_secs as u64)).await;
-        }
-    });
-    info!(interval_secs, "AKW pusher spawned");
-    Some(handle)
-}
-
 async fn run_agents(
     agent_arg: Option<&str>,
     all: bool,
@@ -441,7 +365,10 @@ async fn run_agents(
 
     let registry_path = root_dir.join("config").join("models.yml");
     let model_registry = config::ModelRegistry::load(&registry_path)?;
-    info!(models = model_registry.models.len(), "model registry loaded");
+    info!(
+        models = model_registry.models.len(),
+        "model registry loaded"
+    );
 
     let db_path = root_dir.join(&settings.sqlite_db_path);
     let database = Arc::new(db::Database::open(&db_path)?);
@@ -462,7 +389,16 @@ async fn run_agents(
     // 3. Initialize each agent
     let mut running_agents: Vec<RunningAgent> = Vec::new();
     for name in &agent_names {
-        match init_agent(name, &root_dir, &settings, &model_registry, database.clone(), &core_skills).await {
+        match init_agent(
+            name,
+            &root_dir,
+            &settings,
+            &model_registry,
+            database.clone(),
+            &core_skills,
+        )
+        .await
+        {
             Ok(ra) => {
                 info!(agent = %name, "agent ready");
                 running_agents.push(ra);
@@ -493,17 +429,10 @@ async fn run_agents(
             .map(|ra| (ra.name.clone(), ra.session_mgr.clone()))
             .collect();
 
-    // 4b. Spawn the EP-00015 generic AKW pusher (skipped if AKW not configured).
-    let pusher_handle = spawn_pusher_if_configured(&root_dir, settings.akw_push_interval);
-
     // 5. Run CLI channel (blocks until user exits)
     channels::run_cli(&agent_loops, &session_mgrs, &default_agent, one_shot).await;
 
     // 6. Graceful shutdown (reverse order)
-    if let Some(h) = pusher_handle {
-        h.abort();
-        info!("AKW pusher stopped");
-    }
     shutdown_agents(
         &mut running_agents,
         &root_dir,
@@ -531,8 +460,14 @@ async fn shutdown_agents(
         // EP-00015 Decision E2 — flush session drafts for non-task channels
         // before tearing down the SessionManager. Reads turns from SQLite for
         // each active conv_id within its segment time window.
-        flush_session_drafts(&ra.agent_loop, &ra.session_mgr, root_dir, database, include_turns)
-            .await;
+        flush_session_drafts(
+            &ra.agent_loop,
+            &ra.session_mgr,
+            root_dir,
+            database,
+            include_turns,
+        )
+        .await;
         {
             let mut mgr = ra.session_mgr.lock().await;
             mgr.end_all().await;
@@ -557,7 +492,7 @@ async fn flush_session_drafts(
     };
     let now = chrono::Utc::now();
     for cid in conv_ids {
-        let (channel_type, started, group_id) = {
+        let (channel_type, started) = {
             let mgr = session_mgr.lock().await;
             let ch = match mgr.get_channel_type(&cid) {
                 Some(c) => c,
@@ -567,8 +502,7 @@ async fn flush_session_drafts(
                 Some(s) => s,
                 None => continue,
             };
-            let gid = mgr.get_group_id(&cid);
-            (ch, st, gid)
+            (ch, st)
         };
         if channel_type == "task" {
             // Task channel: no session draft, no agent_conv counter increment.
@@ -580,7 +514,6 @@ async fn flush_session_drafts(
             agent_loop,
             database.as_ref(),
             &cid,
-            group_id.as_deref(),
             &channel_type,
             started,
             now,

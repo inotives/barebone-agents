@@ -3,8 +3,8 @@ use std::path::Path;
 use serde_json::json;
 
 use crate::cli::AgentsCommand;
-use crate::config::{AgentConfig, ModelRegistry};
 use crate::config::settings::agent_dir;
+use crate::config::{AgentConfig, ModelRegistry};
 use crate::db::Database;
 use crate::discover_agents;
 
@@ -75,14 +75,8 @@ fn run_list(
                 .ok()
                 .flatten()
                 .unwrap_or_else(|| "-".to_string());
-            let role = config
-                .as_ref()
-                .map(|c| c.role.as_str())
-                .unwrap_or("?");
-            let model = config
-                .as_ref()
-                .map(|c| c.model.as_str())
-                .unwrap_or("?");
+            let role = config.as_ref().map(|c| c.role.as_str()).unwrap_or("?");
+            let model = config.as_ref().map(|c| c.model.as_str()).unwrap_or("?");
             let mcp_count = config.as_ref().map(|c| c.mcp_servers.len()).unwrap_or(0);
 
             println!(
@@ -140,7 +134,6 @@ fn run_show(
             "discord": discord,
             "mcp_servers": mcp_servers,
             "skills": config.skills,
-            "akw_skills": config.akw_skills,
             "last_active": last_active,
         });
         println!("{}", serde_json::to_string_pretty(&val).unwrap());
@@ -157,11 +150,7 @@ fn run_show(
         if !config.fallbacks.is_empty() {
             println!("Fallbacks:   {}", config.fallbacks.join(", "));
         }
-        println!("AKW skills:  {}", if config.akw_skills { "enabled" } else { "disabled" });
-        println!(
-            "Last active: {}",
-            last_active.as_deref().unwrap_or("-")
-        );
+        println!("Last active: {}", last_active.as_deref().unwrap_or("-"));
 
         // Discord
         if let Some(discord) = &config.channels.discord {
@@ -172,10 +161,7 @@ fn run_show(
                 println!("  Allow from: {}", discord.allow_from.join(", "));
             }
             for (gid, gcfg) in &discord.guilds {
-                println!(
-                    "  Guild {}:  requireMention={}",
-                    gid, gcfg.require_mention
-                );
+                println!("  Guild {}:  requireMention={}", gid, gcfg.require_mention);
             }
         }
 
@@ -189,7 +175,13 @@ fn run_show(
                 } else {
                     m.tools.join(", ")
                 };
-                println!("  {} — {} {} [{}]", m.name, m.command, m.args.join(" "), tools_str);
+                println!(
+                    "  {} — {} {} [{}]",
+                    m.name,
+                    m.command,
+                    m.args.join(" "),
+                    tools_str
+                );
             }
         }
 

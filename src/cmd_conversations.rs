@@ -12,12 +12,7 @@ pub fn run(db: &Database, cmd: ConversationsCommand) -> Result<(), String> {
     }
 }
 
-fn run_list(
-    db: &Database,
-    agent: Option<&str>,
-    limit: u32,
-    as_json: bool,
-) -> Result<(), String> {
+fn run_list(db: &Database, agent: Option<&str>, limit: u32, as_json: bool) -> Result<(), String> {
     let convs = db.list_conversations(agent, limit)?;
 
     if as_json {

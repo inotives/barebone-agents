@@ -1,9 +1,8 @@
 //! Session-summary draft persistence (EP-00015 Decision E2).
 //!
-//! Called from `SessionManager::end_session` — pulls the segment's turns from
-//! SQLite, runs a cheap LLM summarization, writes a markdown draft to
-//! `data/drafts/sessions/<group_first_8>-<segment_compact_iso>.md`. The
-//! pusher (Decision A2) backs it up to AKW on its next cycle.
+//! Called during agent shutdown — pulls the segment's turns from SQLite, runs
+//! a cheap LLM summarization, and writes a markdown draft to
+//! `data/drafts/sessions/<segment_compact_iso>.md`.
 //!
 //! Skipped for `channel_type == "task"` per the channel filter — task channels
 //! produce research drafts (Decision E) and have trivial single-round-trip
@@ -31,7 +30,6 @@ pub async fn write_session_draft(
     agent_loop: &AgentLoop,
     db: &Database,
     conv_id: &str,
-    group_id: Option<&str>,
     channel_type: &str,
     segment_started_at: DateTime<Utc>,
     segment_ended_at: DateTime<Utc>,
@@ -49,7 +47,10 @@ pub async fn write_session_draft(
         .map_err(|e| format!("load_final_turns_in_window: {}", e))?;
 
     if turns.is_empty() {
-        debug!(conv_id, "session_draft: no turns in segment window, skipping");
+        debug!(
+            conv_id,
+            "session_draft: no turns in segment window, skipping"
+        );
         return Ok(None);
     }
 
@@ -59,19 +60,13 @@ pub async fn write_session_draft(
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("failed to create {}: {}", dir.display(), e))?;
 
-    let group_short = group_id
-        .map(|gid| gid.chars().take(8).collect::<String>())
-        .unwrap_or_else(|| "no-group".to_string());
-    let segment_compact = segment_started_at
-        .format("%Y%m%dT%H%M%SZ")
-        .to_string();
-    let primary = dir.join(format!("{}-{}.md", group_short, segment_compact));
+    let segment_compact = segment_started_at.format("%Y%m%dT%H%M%SZ").to_string();
+    let primary = dir.join(format!("{}.md", segment_compact));
     let target = pick_unique_path(&primary);
 
     let body = render_session_draft(
         agent_loop.agent_name.as_str(),
         conv_id,
-        group_id,
         channel_type,
         segment_started_at,
         segment_ended_at,
@@ -106,7 +101,11 @@ fn pick_unique_path(primary: &Path) -> PathBuf {
             return cand;
         }
     }
-    parent.join(format!("{}-{}.md", stem, chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)))
+    parent.join(format!(
+        "{}-{}.md",
+        stem,
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ))
 }
 
 /// LLM summarization of the segment's turns.
@@ -127,7 +126,9 @@ async fn run_summary(agent_loop: &AgentLoop, turns: &[ConversationMessage]) -> S
     }
 
     let response = agent_loop.cheap_call(system, &user).await;
-    if response.starts_with("LLM call failed") || response.starts_with("I'm sorry, all models failed") {
+    if response.starts_with("LLM call failed")
+        || response.starts_with("I'm sorry, all models failed")
+    {
         warn!("session_draft: LLM summarization failed, using minimal stub");
         return format!(
             "(LLM summarization unavailable — {} turns recorded; see Turns appendix.)",
@@ -141,7 +142,6 @@ async fn run_summary(agent_loop: &AgentLoop, turns: &[ConversationMessage]) -> S
 fn render_session_draft(
     agent_name: &str,
     conv_id: &str,
-    group_id: Option<&str>,
     channel_type: &str,
     started: DateTime<Utc>,
     ended: DateTime<Utc>,
@@ -152,9 +152,6 @@ fn render_session_draft(
     let mut out = String::new();
     out.push_str("---\n");
     out.push_str(&format!("agent: {}\n", agent_name));
-    if let Some(gid) = group_id {
-        out.push_str(&format!("group_id: {}\n", gid));
-    }
     out.push_str(&format!("conv_id: {}\n", conv_id));
     out.push_str(&format!("channel_type: {}\n", channel_type));
     out.push_str(&format!(
@@ -261,7 +258,13 @@ mod tests {
         let primary = tmp.path().join("a.md");
         std::fs::write(&primary, "x").unwrap();
         let suffixed = pick_unique_path(&primary);
-        assert!(suffixed.file_name().unwrap().to_string_lossy().ends_with("-2.md"));
+        assert!(
+            suffixed
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with("-2.md")
+        );
     }
 
     #[test]
@@ -279,7 +282,6 @@ mod tests {
         let out = render_session_draft(
             "ino",
             "c1",
-            Some("group-abc12345"),
             "cli",
             started,
             ended,
@@ -288,7 +290,7 @@ mod tests {
             true,
         );
         assert!(out.contains("agent: ino"));
-        assert!(out.contains("group_id: group-abc12345"));
+        assert!(!out.contains("group_id:"));
         assert!(out.contains("conv_id: c1"));
         assert!(out.contains("channel_type: cli"));
         assert!(out.contains("turn_count: 2"));
@@ -304,17 +306,8 @@ mod tests {
         let turns = vec![turn("user", "hi", "2026-05-03T00:00:00Z")];
         let started = chrono::Utc::now();
         let ended = chrono::Utc::now();
-        let out = render_session_draft(
-            "ino",
-            "c1",
-            None,
-            "cli",
-            started,
-            ended,
-            &turns,
-            "summary",
-            false,
-        );
+        let out =
+            render_session_draft("ino", "c1", "cli", started, ended, &turns, "summary", false);
         assert!(!out.contains("## Turns"));
     }
 
@@ -331,7 +324,11 @@ mod tests {
     fn turns_appendix_drops_oldest_over_total_cap() {
         let mut turns = Vec::new();
         for i in 0..200 {
-            turns.push(turn("user", &format!("turn-{} {}", i, "y".repeat(800)), "2026-05-03T00:00:00Z"));
+            turns.push(turn(
+                "user",
+                &format!("turn-{} {}", i, "y".repeat(800)),
+                "2026-05-03T00:00:00Z",
+            ));
         }
         let out = render_turns_appendix(&turns, "c1");
         assert!(out.contains("earlier turn"));

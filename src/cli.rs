@@ -1,7 +1,11 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "barebone-agent", version, about = "A local-first, LLM-agnostic AI agent harness")]
+#[command(
+    name = "barebone-agent",
+    version,
+    about = "A local-first, LLM-agnostic AI agent harness"
+)]
 pub struct Cli {
     /// Log level (trace, debug, info, warn, error)
     #[arg(long, global = true)]
@@ -65,25 +69,10 @@ pub enum Commands {
         #[command(subcommand)]
         command: ConfigCommand,
     },
-    /// Pull/search/list skills (local pool ↔ AKW)
-    Skill {
-        #[command(subcommand)]
-        command: SkillCommand,
-    },
-    /// Pull/search/list roles (local pool ↔ AKW)
-    Role {
-        #[command(subcommand)]
-        command: RoleCommand,
-    },
-    /// Manage the local preference pool (list, pull, promote)
+    /// Manage the local preference pool (list, promote)
     Prefs {
         #[command(subcommand)]
         command: PrefsCommand,
-    },
-    /// AKW backup operations (push, status)
-    Akw {
-        #[command(subcommand)]
-        command: AkwCommand,
     },
     /// View token usage breakdown
     Tokens {
@@ -295,98 +284,12 @@ pub enum ConfigCommand {
 }
 
 #[derive(Subcommand)]
-pub enum SkillCommand {
-    /// Search AKW for skills matching a query (top 5)
-    Search {
-        /// Search query
-        query: String,
-        /// Pick the AKW MCP config from this agent's agent.yml (defaults to scan)
-        #[arg(long)]
-        agent: Option<String>,
-    },
-    /// Pull a skill from AKW into agents/_skills/<slug>.md
-    Pull {
-        /// AKW slug or memory path
-        slug: String,
-        /// Overwrite an existing local file
-        #[arg(long, default_value_t = false)]
-        force: bool,
-        /// Write under a different slug (resolves cross-domain collisions)
-        #[arg(long)]
-        rename: Option<String>,
-        /// Pick the AKW MCP config from this agent's agent.yml
-        #[arg(long)]
-        agent: Option<String>,
-    },
-    /// List skills in the local pool (agents/_skills/)
-    List,
-}
-
-#[derive(Subcommand)]
-pub enum RoleCommand {
-    /// Search AKW for roles (agents) matching a query (top 5)
-    Search {
-        /// Search query
-        query: String,
-        /// Pick the AKW MCP config from this agent's agent.yml (defaults to scan)
-        #[arg(long)]
-        agent: Option<String>,
-    },
-    /// Pull a role from AKW into agents/_roles/<slug>.md
-    Pull {
-        /// AKW slug or memory path
-        slug: String,
-        /// Overwrite an existing local file
-        #[arg(long, default_value_t = false)]
-        force: bool,
-        /// Write under a different slug
-        #[arg(long)]
-        rename: Option<String>,
-        /// Pick the AKW MCP config from this agent's agent.yml
-        #[arg(long)]
-        agent: Option<String>,
-    },
-    /// List roles in the local pool (agents/_roles/)
-    List,
-}
-
-#[derive(Subcommand)]
 pub enum PrefsCommand {
     /// List active and pending preferences
     List,
-    /// Pull a preference from AKW into the local active pool
-    Pull {
-        /// AKW slug or memory path
-        slug: String,
-        /// Overwrite an existing local file
-        #[arg(long, default_value_t = false)]
-        force: bool,
-        /// Write under a different slug
-        #[arg(long)]
-        rename: Option<String>,
-        /// Pick the AKW MCP config from this agent's agent.yml
-        #[arg(long)]
-        agent: Option<String>,
-    },
     /// Promote a pending preference (data/drafts/...) into the active pool.
-    /// Also deletes the corresponding draft from AKW (best-effort).
     Promote {
         /// Slug or filename of the pending preference
         slug: String,
-        /// Pick the AKW MCP config for the cleanup-delete (defaults to scan)
-        #[arg(long)]
-        agent: Option<String>,
     },
-}
-
-#[derive(Subcommand)]
-pub enum AkwCommand {
-    /// Run a pusher cycle now — sync local artifacts to AKW
-    Push {
-        /// Pick the AKW MCP config from this agent's agent.yml
-        #[arg(long)]
-        agent: Option<String>,
-    },
-    /// Show watched directories with file/dirty/never-pushed counts
-    Status,
 }

@@ -30,11 +30,7 @@ impl CoreSkills {
         let mut entries: Vec<_> = match std::fs::read_dir(skills_dir) {
             Ok(entries) => entries
                 .filter_map(|e| e.ok())
-                .filter(|e| {
-                    e.path()
-                        .extension()
-                        .map_or(false, |ext| ext == "md")
-                })
+                .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
                 .collect(),
             Err(e) => {
                 warn!(error = %e, "failed to read skills directory");
@@ -68,11 +64,7 @@ impl CoreSkills {
         let content = parts.join("\n\n");
         let token_estimate = (content.len() / 4) as u32;
 
-        info!(
-            count,
-            token_estimate,
-            "core skills loaded"
-        );
+        info!(count, token_estimate, "core skills loaded");
 
         Self {
             content,
@@ -108,10 +100,9 @@ pub struct EquippedSkill {
 /// to do real NLP. Skill bodies / keywords are NOT stopword-filtered, so
 /// a skill keyword like "for" still matches if the user actually typed "for".
 const STOPWORDS: &[&str] = &[
-    "a", "an", "and", "or", "the", "to", "of", "in", "on", "at", "by", "for",
-    "is", "are", "was", "were", "be", "been", "being", "do", "does", "did",
-    "has", "have", "had", "i", "you", "we", "they", "it", "this", "that",
-    "with", "from", "as", "but", "if", "then", "so", "not",
+    "a", "an", "and", "or", "the", "to", "of", "in", "on", "at", "by", "for", "is", "are", "was",
+    "were", "be", "been", "being", "do", "does", "did", "has", "have", "had", "i", "you", "we",
+    "they", "it", "this", "that", "with", "from", "as", "but", "if", "then", "so", "not",
 ];
 
 fn tokenize_message(s: &str) -> HashSet<String> {
@@ -172,7 +163,10 @@ fn parse_skill(slug: &str, raw: &str) -> EquippedSkill {
         if let Some(end) = rest.find("\n---\n") {
             let fm = &rest[..end];
             let body_start = end + "\n---\n".len();
-            (Some(fm), rest[body_start..].trim_start_matches('\n').to_string())
+            (
+                Some(fm),
+                rest[body_start..].trim_start_matches('\n').to_string(),
+            )
         } else {
             (None, raw.to_string())
         }
@@ -429,7 +423,12 @@ mod tests {
                 token_estimate: 3,
             },
         ];
-        let picked = select_equipped_skills(&pool, "research the crypto market and macro economy", 2, 4000);
+        let picked = select_equipped_skills(
+            &pool,
+            "research the crypto market and macro economy",
+            2,
+            4000,
+        );
         assert_eq!(picked.len(), 1);
         assert_eq!(picked[0].slug, "research");
     }
@@ -521,8 +520,16 @@ mod tests {
             "research_pipeline",
             "---\nname: research_pipeline\nkeywords: [research, market, macro]\n---\n\n# Research\nbody",
         );
-        write_skill(&pool_dir, "code_review", "---\nname: code_review\nkeywords: [review, diff, pull request]\n---\n\nReview body");
-        write_skill(&pool_dir, "notes", "no frontmatter, just a body about debugging");
+        write_skill(
+            &pool_dir,
+            "code_review",
+            "---\nname: code_review\nkeywords: [review, diff, pull request]\n---\n\nReview body",
+        );
+        write_skill(
+            &pool_dir,
+            "notes",
+            "no frontmatter, just a body about debugging",
+        );
 
         let pool = load_equipped_pool(&pool_dir);
         assert_eq!(pool.len(), 3);
@@ -531,7 +538,12 @@ mod tests {
         assert_eq!(pool[1].slug, "notes");
         assert_eq!(pool[2].slug, "research_pipeline");
 
-        let picked = select_equipped_skills(&pool, "research the crypto market and macro economy", 2, 4000);
+        let picked = select_equipped_skills(
+            &pool,
+            "research the crypto market and macro economy",
+            2,
+            4000,
+        );
         assert_eq!(picked.len(), 1);
         assert_eq!(picked[0].slug, "research_pipeline");
     }
