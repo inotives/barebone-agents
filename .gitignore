@@ -32,6 +32,9 @@ workspace/
 # Claude Code local config / sessions
 .claude/
 
+# CodeGraph local index/cache
+.codegraph/
+
 # IDE
 .idea/
 .vscode/
