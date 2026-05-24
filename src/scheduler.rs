@@ -165,11 +165,22 @@ async fn execute_task(
 
     // Generate conversation ID for this task execution
     let conv_id = format!("task-{}-{}", key, chrono::Utc::now().timestamp());
+    let session_name = task.as_ref().and_then(|t| t.mission_key.as_deref());
+    let session_id = match session_name {
+        Some(name) => db
+            .resolve_session_id_by_name(name)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        None => uuid::Uuid::new_v4().to_string(),
+    };
 
     // Session start — capture recommended_context for system prompt injection.
     let recommended_context = {
         let mut mgr = session_mgr.lock().await;
-        mgr.ensure_session(&conv_id, "task").await
+        let context = mgr.ensure_session(&conv_id, "task").await;
+        mgr.set_session_name(&conv_id, session_name.map(str::to_string));
+        context
     };
 
     // Per-segment preference selection (EP-00015 Decision A — cached).
@@ -210,6 +221,8 @@ async fn execute_task(
         .run(
             &message,
             &conv_id,
+            &session_id,
+            session_name,
             "task",
             None,
             &recommended_context,
@@ -244,6 +257,24 @@ async fn execute_task(
         return;
     }
     info!(task = %key, "task completed");
+
+    if session_name.is_some() {
+        match crate::session_draft::write_session_summary_draft(
+            root_dir,
+            agent_loop,
+            db,
+            &session_id,
+            true,
+        )
+        .await
+        {
+            Ok(Some(path)) => {
+                info!(task = %key, path = %path.display(), "session-level summary refreshed")
+            }
+            Ok(None) => {}
+            Err(e) => warn!(task = %key, error = %e, "session-level summary failed"),
+        }
+    }
 
     // Skip everything below for system tasks (Decision I).
     let task_metadata = task

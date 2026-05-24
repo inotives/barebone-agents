@@ -21,12 +21,21 @@
 - Keep CLI/ad-hoc conversations working by assigning them generated local session ids.
 
 ## Implementation Status
-- [ ] Step 1 — Add `session_id` to conversation persistence and backfill existing rows.
-- [ ] Step 2 — Set task-run `session_id` from the task's `mission_key`, or a generated standalone-task session when no mission exists.
-- [ ] Step 3 — Update conversation listing/show commands to expose session grouping without breaking existing output.
-- [ ] Step 4 — Add a first-class `sessions` table if the initial column-based model proves too limited.
-- [ ] Step 5 — Update session draft generation to support mission/session-level summaries across many conversations.
-- [ ] Step 6 — Update README, `docs/SPECS.md`, and `AGENTS.md` project structure/domain wording.
-- [ ] Step 7 — Verify with schema tests, task execution tests, conversation command tests, `cargo test`, and one-shot smoke test.
+- [x] Step 1 — Add `session_id` to conversation persistence and backfill existing rows.
+- [x] Step 2 — Set task-run `session_id` from the task's `mission_key`, or a generated standalone-task session when no mission exists.
+- [x] Step 3 — Update conversation listing/show commands to expose session grouping without breaking existing output.
+- [x] Step 4 — Add a first-class `sessions` table if the initial column-based model proves too limited.
+- [x] Step 5 — Update session draft generation to support mission/session-level summaries across many conversations.
+- [x] Step 6 — Update README, `docs/SPECS.md`, and `AGENTS.md` project structure/domain wording.
+- [x] Step 7 — Verify with schema tests, task execution tests, conversation command tests, `cargo test`, and one-shot smoke test.
 
-## Status: IN PROGRESS
+## Status: IN REVIEW
+
+## Implementation Notes
+
+- `session_id` is a generated UUID, not a mission key.
+- `session_name` is optional; mission task runs store the mission key there and reuse the first matching session UUID for later task conversations in that mission.
+- CLI `/continue` starts a new conversation under the same session UUID; CLI `/new` starts a fresh session UUID.
+- A first-class `sessions` table is deferred; the column model is sufficient for the current slice.
+- Per-conversation session drafts now include `session_id` and optional `session_name` in frontmatter.
+- Mission task completion refreshes a session-level summary at `data/drafts/sessions/by-session/<session_id>.md`, aggregating final user/assistant turns across conversations in that session.

@@ -33,11 +33,11 @@ barebone-agents/
 │       └── .env                      # Agent-specific credentials
 │
 ├── data/                             # Runtime data (gitignored)
-│   ├── barebone-agent.db             # SQLite (conversations, tasks, reflection_counters)
+│   ├── barebone-agent.db             # SQLite (sessions, conversations, tasks, reflection_counters)
 │   └── drafts/                       # Local-first artifact storage (EP-00015)
 │       ├── researches/             #   research drafts (opt-in via persist_as_draft)
 │       ├── knowledges/preferences/ #   pending preferences (reflection-generated)
-│       ├── sessions/                 #   conversation summaries
+│       ├── sessions/                 #   conversation and session summaries
 │       └── notes/                    #   ad-hoc notes (forward-compatible)
 │
 ├── src/
@@ -45,16 +45,16 @@ barebone-agents/
 │   ├── cli.rs                        # CLI argument parsing (clap)
 │   ├── agent_loop.rs                 # Agent reasoning loop + system prompt assembly
 │   ├── scheduler.rs                  # Heartbeat + task execution
-│   ├── session.rs                    # Per-conversation session manager
+│   ├── session.rs                    # Active conversation/session manager
 │   ├── preferences.rs                # Local pref pool reader + selector (EP-00015)
 │   ├── memory_context.rs             # Prior-work search + previous-run formatting (EP-00015)
 │   ├── draft_writer.rs               # Research draft persistence (EP-00015)
-│   ├── session_draft.rs              # Session-summary draft producer (EP-00015)
+│   ├── session_draft.rs              # Conversation/session summary draft producer
 │   ├── reflection.rs                 # Counter-triggered pattern reflection (EP-00015)
 │   ├── triggers.rs                   # `save as preference` keyword trigger (EP-00015)
 │   ├── cmd_prefs.rs                  # `prefs list|promote` CLI
 │   ├── config/                       # Config loading (env, models, agent, squad)
-│   ├── db/                           # SQLite layer (conversations, tasks, reflection_counters)
+│   ├── db/                           # SQLite layer (sessions, conversations, tasks, reflection_counters)
 │   ├── llm/                          # LLM clients (OpenAI-compat, Anthropic, Gemini, pool)
 │   ├── tools/                        # Tool registry + built-in tools + MCP client
 │   └── channels/                     # CLI + Discord channels

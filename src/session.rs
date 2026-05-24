@@ -12,6 +12,8 @@ pub struct SessionManager {
 }
 
 struct ActiveSession {
+    session_id: String,
+    session_name: Option<String>,
     channel_type: String,
     recommended_context: Vec<String>,
     /// Per-segment preference selection cache (EP-00015 Decision A).
@@ -54,6 +56,8 @@ impl SessionManager {
 
         let context = Vec::new();
         let session = ActiveSession {
+            session_id: uuid::Uuid::new_v4().to_string(),
+            session_name: None,
             channel_type: channel_type.to_string(),
             recommended_context: context.clone(),
             selected_preferences: Vec::new(),
@@ -107,6 +111,22 @@ impl SessionManager {
     /// Get the channel_type the session was opened with.
     pub fn get_channel_type(&self, conv_id: &str) -> Option<String> {
         self.sessions.get(conv_id).map(|s| s.channel_type.clone())
+    }
+
+    pub fn get_session_id(&self, conv_id: &str) -> Option<String> {
+        self.sessions.get(conv_id).map(|s| s.session_id.clone())
+    }
+
+    pub fn set_session_name(&mut self, conv_id: &str, session_name: Option<String>) {
+        if let Some(session) = self.sessions.get_mut(conv_id) {
+            session.session_name = session_name;
+        }
+    }
+
+    pub fn get_session_name(&self, conv_id: &str) -> Option<String> {
+        self.sessions
+            .get(conv_id)
+            .and_then(|s| s.session_name.clone())
     }
 
     /// All active conversation IDs. Snapshot — caller can iterate without

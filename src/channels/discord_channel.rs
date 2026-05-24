@@ -140,11 +140,15 @@ async fn event_handler(
         // Build or reuse session key.
         // We use the channel_id as the conversation-grouping key so messages
         // in the same channel / thread share a conversation.
-        let (conv_id, recommended_context) = {
+        let (conv_id, session_id, session_name, recommended_context) = {
             let mut mgr = data.session_mgr.lock().await;
             let conv_key = format!("discord-ch-{}", channel_id);
             let context = mgr.ensure_session(&conv_key, "discord").await;
-            (conv_key, context)
+            let session_id = mgr
+                .get_session_id(&conv_key)
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let session_name = mgr.get_session_name(&conv_key);
+            (conv_key, session_id, session_name, context)
         };
 
         // EP-00015 Decision H — manual `save as preference` keyword trigger.
@@ -210,6 +214,8 @@ async fn event_handler(
             .run(
                 &content,
                 &conv_id,
+                &session_id,
+                session_name.as_deref(),
                 "discord",
                 None,
                 &recommended_context,

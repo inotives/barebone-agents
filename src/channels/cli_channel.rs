@@ -24,12 +24,17 @@ pub async fn run_cli(
         .keys()
         .map(|name| (name.clone(), new_conv_id(name)))
         .collect();
+    let mut session_ids: HashMap<String, String> = agents
+        .keys()
+        .map(|name| (name.clone(), new_session_id()))
+        .collect();
     let mut prev_conv_ids: HashMap<String, Option<String>> = HashMap::new();
 
     if let Some(message) = one_shot_message {
         // One-shot mode — send to default agent
         if let Some(agent_loop) = agents.get(default_agent) {
             let conv_id = conv_ids.get(default_agent).unwrap();
+            let session_id = session_ids.get(default_agent).unwrap();
             let (recommended_context, selected_preferences, prior_work) =
                 match session_mgrs.get(default_agent) {
                     Some(sm) => {
@@ -63,6 +68,8 @@ pub async fn run_cli(
                 .run(
                     message,
                     conv_id,
+                    session_id,
+                    None,
                     "cli",
                     None,
                     &recommended_context,
@@ -163,10 +170,12 @@ pub async fn run_cli(
             let new_id = new_conv_id(target_name);
             println!("New conversation for {}: {}", target_name, new_id);
             conv_ids.insert(target_name.to_string(), new_id);
+            session_ids.insert(target_name.to_string(), new_session_id());
             continue;
         }
 
         let conv_id = conv_ids.get(target_name).unwrap();
+        let session_id = session_ids.get(target_name).unwrap();
         let parent_id = prev_conv_ids.get(target_name).and_then(|p| p.as_deref());
 
         // EP-00015 Decision H — manual `save as preference` keyword trigger.
@@ -238,6 +247,8 @@ pub async fn run_cli(
             .run(
                 message,
                 conv_id,
+                session_id,
+                None,
                 "cli",
                 parent_id,
                 &recommended_context,
@@ -289,6 +300,10 @@ fn new_conv_id(agent_name: &str) -> String {
         agent_name,
         &uuid::Uuid::new_v4().to_string()[..8]
     )
+}
+
+fn new_session_id() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 #[cfg(test)]

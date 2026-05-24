@@ -17,6 +17,7 @@ use crate::agent_loop::AgentLoop;
 use crate::db::{ConversationMessage, Database};
 
 const DRAFT_DIR: &str = "data/drafts/sessions";
+const SESSION_SUMMARY_DIR: &str = "data/drafts/sessions/by-session";
 
 const DEFAULT_PER_TURN_BYTE_CAP: usize = 2048;
 const DEFAULT_TOTAL_APPENDIX_BYTE_CAP: usize = 50_000;
@@ -66,6 +67,8 @@ pub async fn write_session_draft(
 
     let body = render_session_draft(
         agent_loop.agent_name.as_str(),
+        &turns[0].session_id,
+        turns[0].session_name.as_deref(),
         conv_id,
         channel_type,
         segment_started_at,
@@ -82,6 +85,48 @@ pub async fn write_session_draft(
         bytes = body.len(),
         turns = turns.len(),
         "session draft written"
+    );
+    Ok(Some(target))
+}
+
+/// Write or refresh a durable session-level summary across all conversations
+/// currently recorded for `session_id`.
+pub async fn write_session_summary_draft(
+    root_dir: &Path,
+    agent_loop: &AgentLoop,
+    db: &Database,
+    session_id: &str,
+    include_turns: bool,
+) -> Result<Option<PathBuf>, String> {
+    let turns = db
+        .load_final_turns_for_session(session_id)
+        .map_err(|e| format!("load_final_turns_for_session: {}", e))?;
+    if turns.is_empty() {
+        debug!(session_id, "session_draft: no session turns, skipping");
+        return Ok(None);
+    }
+
+    let summary = run_session_summary(agent_loop, &turns).await;
+    let dir = root_dir.join(SESSION_SUMMARY_DIR);
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("failed to create {}: {}", dir.display(), e))?;
+
+    let target = dir.join(format!("{}.md", safe_filename(session_id)));
+    let body = render_session_summary_draft(
+        agent_loop.agent_name.as_str(),
+        session_id,
+        turns[0].session_name.as_deref(),
+        &turns,
+        &summary,
+        include_turns,
+    );
+    std::fs::write(&target, &body)
+        .map_err(|e| format!("failed to write {}: {}", target.display(), e))?;
+    info!(
+        path = %target.display(),
+        bytes = body.len(),
+        turns = turns.len(),
+        "session-level draft written"
     );
     Ok(Some(target))
 }
@@ -138,9 +183,50 @@ async fn run_summary(agent_loop: &AgentLoop, turns: &[ConversationMessage]) -> S
     response
 }
 
+async fn run_session_summary(agent_loop: &AgentLoop, turns: &[ConversationMessage]) -> String {
+    let system = "You write concise durable session summaries for an archived agent work session. \
+        A session may contain many conversations or task execution logs. Output 5-10 sentences in \
+        plain markdown. Cover the mission/work context, key actions, decisions, outcomes, and \
+        anything left unresolved. Do not invent details.";
+    let mut user = String::with_capacity(4096);
+    user.push_str("Session turns across conversations (oldest first):\n\n");
+    let mut last_conv = "";
+    for turn in turns.iter().take(40) {
+        if turn.conversation_id != last_conv {
+            user.push_str(&format!(
+                "\nConversation {} ({})\n\n",
+                turn.conversation_id, turn.channel_type
+            ));
+            last_conv = &turn.conversation_id;
+        }
+        let role = match turn.role.as_str() {
+            "user" => "User",
+            "assistant" => "Agent",
+            other => other,
+        };
+        let content: String = turn.content.chars().take(2000).collect();
+        user.push_str(&format!("**{}**: {}\n\n", role, content));
+    }
+
+    let response = agent_loop.cheap_call(system, &user).await;
+    if response.starts_with("LLM call failed")
+        || response.starts_with("I'm sorry, all models failed")
+    {
+        warn!("session_draft: session-level LLM summarization failed, using minimal stub");
+        return format!(
+            "(LLM summarization unavailable — {} turns recorded across {} conversation(s).)",
+            turns.len(),
+            count_conversations(turns)
+        );
+    }
+    response
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_session_draft(
     agent_name: &str,
+    session_id: &str,
+    session_name: Option<&str>,
     conv_id: &str,
     channel_type: &str,
     started: DateTime<Utc>,
@@ -152,6 +238,10 @@ fn render_session_draft(
     let mut out = String::new();
     out.push_str("---\n");
     out.push_str(&format!("agent: {}\n", agent_name));
+    out.push_str(&format!("session_id: {}\n", session_id));
+    if let Some(name) = session_name {
+        out.push_str(&format!("session_name: {}\n", name));
+    }
     out.push_str(&format!("conv_id: {}\n", conv_id));
     out.push_str(&format!("channel_type: {}\n", channel_type));
     out.push_str(&format!(
@@ -174,6 +264,55 @@ fn render_session_draft(
         out.push_str(&render_turns_appendix(turns, conv_id));
     }
     out
+}
+
+fn render_session_summary_draft(
+    agent_name: &str,
+    session_id: &str,
+    session_name: Option<&str>,
+    turns: &[ConversationMessage],
+    summary: &str,
+    include_turns: bool,
+) -> String {
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str(&format!("agent: {}\n", agent_name));
+    out.push_str(&format!("session_id: {}\n", session_id));
+    if let Some(name) = session_name {
+        out.push_str(&format!("session_name: {}\n", name));
+    }
+    out.push_str(&format!(
+        "conversation_count: {}\n",
+        count_conversations(turns)
+    ));
+    out.push_str(&format!("turn_count: {}\n", turns.len()));
+    if let Some(first) = turns.first() {
+        out.push_str(&format!("session_started_at: {}\n", first.created_at));
+    }
+    if let Some(last) = turns.last() {
+        out.push_str(&format!("session_updated_at: {}\n", last.created_at));
+    }
+    out.push_str("source: session_summary_draft\n");
+    out.push_str("---\n\n");
+    out.push_str("## Summary\n\n");
+    out.push_str(summary.trim());
+    out.push('\n');
+
+    if include_turns {
+        out.push_str("\n## Turns\n\n");
+        out.push_str(&render_session_turns_appendix(turns));
+    }
+    out
+}
+
+fn count_conversations(turns: &[ConversationMessage]) -> usize {
+    let mut ids = Vec::new();
+    for turn in turns {
+        if !ids.contains(&turn.conversation_id) {
+            ids.push(turn.conversation_id.clone());
+        }
+    }
+    ids.len()
 }
 
 fn render_turns_appendix(turns: &[ConversationMessage], conv_id: &str) -> String {
@@ -223,6 +362,42 @@ fn render_turns_appendix(turns: &[ConversationMessage], conv_id: &str) -> String
     out
 }
 
+fn render_session_turns_appendix(turns: &[ConversationMessage]) -> String {
+    let mut out = String::new();
+    let mut current_conv = "";
+    for turn in turns {
+        if turn.conversation_id != current_conv {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out.push_str(&format!(
+                "### {} ({})\n\n",
+                turn.conversation_id, turn.channel_type
+            ));
+            current_conv = &turn.conversation_id;
+        }
+        out.push_str(&render_turns_appendix(
+            std::slice::from_ref(turn),
+            &turn.conversation_id,
+        ));
+        out.push('\n');
+    }
+    out
+}
+
+fn safe_filename(input: &str) -> String {
+    input
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,6 +405,8 @@ mod tests {
     fn turn(role: &str, content: &str, created_at: &str) -> ConversationMessage {
         ConversationMessage {
             id: 1,
+            session_id: "s1".into(),
+            session_name: None,
             conversation_id: "c1".into(),
             agent_name: "ino".into(),
             role: role.into(),
@@ -281,6 +458,8 @@ mod tests {
             .with_timezone(&Utc);
         let out = render_session_draft(
             "ino",
+            "s1",
+            Some("MIS-00001"),
             "c1",
             "cli",
             started,
@@ -290,6 +469,8 @@ mod tests {
             true,
         );
         assert!(out.contains("agent: ino"));
+        assert!(out.contains("session_id: s1"));
+        assert!(out.contains("session_name: MIS-00001"));
         assert!(!out.contains("group_id:"));
         assert!(out.contains("conv_id: c1"));
         assert!(out.contains("channel_type: cli"));
@@ -306,9 +487,37 @@ mod tests {
         let turns = vec![turn("user", "hi", "2026-05-03T00:00:00Z")];
         let started = chrono::Utc::now();
         let ended = chrono::Utc::now();
-        let out =
-            render_session_draft("ino", "c1", "cli", started, ended, &turns, "summary", false);
+        let out = render_session_draft(
+            "ino", "s1", None, "c1", "cli", started, ended, &turns, "summary", false,
+        );
         assert!(!out.contains("## Turns"));
+    }
+
+    #[test]
+    fn render_session_summary_draft_groups_conversations() {
+        let mut turns = vec![
+            turn("user", "first", "2026-05-03T00:00:00Z"),
+            turn("assistant", "second", "2026-05-03T00:00:01Z"),
+        ];
+        turns[0].conversation_id = "conv-1".into();
+        turns[0].session_name = Some("MIS-00001".into());
+        turns[1].conversation_id = "conv-2".into();
+        turns[1].session_name = Some("MIS-00001".into());
+
+        let out = render_session_summary_draft(
+            "ino",
+            "session-1",
+            Some("MIS-00001"),
+            &turns,
+            "Mission summary.",
+            true,
+        );
+        assert!(out.contains("session_id: session-1"));
+        assert!(out.contains("session_name: MIS-00001"));
+        assert!(out.contains("conversation_count: 2"));
+        assert!(out.contains("source: session_summary_draft"));
+        assert!(out.contains("### conv-1 (cli)"));
+        assert!(out.contains("### conv-2 (cli)"));
     }
 
     #[test]
