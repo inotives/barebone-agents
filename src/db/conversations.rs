@@ -4,6 +4,8 @@ use serde_json::Value;
 #[derive(Debug, Clone)]
 pub struct ConversationMessage {
     pub id: i64,
+    pub session_id: String,
+    pub session_name: Option<String>,
     pub conversation_id: String,
     pub agent_name: String,
     pub role: String,
@@ -25,6 +27,8 @@ pub struct TokenUsage {
 
 #[derive(Debug, Clone)]
 pub struct ConversationSummary {
+    pub session_id: String,
+    pub session_name: Option<String>,
     pub conversation_id: String,
     pub agent_name: String,
     pub channel_type: String,
@@ -37,6 +41,22 @@ pub struct ConversationSummary {
 }
 
 impl Database {
+    pub fn resolve_session_id_by_name(&self, session_name: &str) -> Result<Option<String>, String> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn.query_row(
+            "SELECT session_id FROM conversations \
+             WHERE session_name = ?1 AND session_id IS NOT NULL AND session_id != '' \
+             ORDER BY id LIMIT 1",
+            [session_name],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(session_id) => Ok(Some(session_id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(format!("Failed to resolve session_id: {}", e)),
+        }
+    }
+
     /// Save a message to the conversations table.
     pub fn save_message(
         &self,
@@ -52,12 +72,50 @@ impl Database {
         is_final: bool,
         metadata: Option<&str>,
     ) -> Result<i64, String> {
+        self.save_message_with_session(
+            conversation_id,
+            None,
+            conversation_id,
+            agent_name,
+            role,
+            content,
+            channel_type,
+            model_used,
+            input_tokens,
+            output_tokens,
+            turn_id,
+            is_final,
+            metadata,
+        )
+    }
+
+    /// Save a message to the conversations table with explicit session grouping.
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_message_with_session(
+        &self,
+        session_id: &str,
+        session_name: Option<&str>,
+        conversation_id: &str,
+        agent_name: &str,
+        role: &str,
+        content: &str,
+        channel_type: &str,
+        model_used: Option<&str>,
+        input_tokens: i64,
+        output_tokens: i64,
+        turn_id: &str,
+        is_final: bool,
+        metadata: Option<&str>,
+    ) -> Result<i64, String> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO conversations (conversation_id, agent_name, role, content, channel_type, \
-             model_used, input_tokens, output_tokens, turn_id, is_final, metadata) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO conversations (session_id, session_name, conversation_id, agent_name, \
+             role, content, channel_type, model_used, input_tokens, output_tokens, turn_id, \
+             is_final, metadata) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             rusqlite::params![
+                session_id,
+                session_name,
                 conversation_id,
                 agent_name,
                 role,
@@ -84,7 +142,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT id, conversation_id, agent_name, role, content, channel_type, \
+                "SELECT id, session_id, session_name, conversation_id, agent_name, role, content, channel_type, \
                  model_used, input_tokens, output_tokens, turn_id, is_final, metadata, created_at \
                  FROM conversations \
                  WHERE conversation_id = ?1 AND is_final = 1 \
@@ -96,18 +154,20 @@ impl Database {
             .query_map(rusqlite::params![conversation_id, limit], |row| {
                 Ok(ConversationMessage {
                     id: row.get(0)?,
-                    conversation_id: row.get(1)?,
-                    agent_name: row.get(2)?,
-                    role: row.get(3)?,
-                    content: row.get(4)?,
-                    channel_type: row.get(5)?,
-                    model_used: row.get(6)?,
-                    input_tokens: row.get(7)?,
-                    output_tokens: row.get(8)?,
-                    turn_id: row.get(9)?,
-                    is_final: row.get(10)?,
-                    metadata: row.get(11)?,
-                    created_at: row.get(12)?,
+                    session_id: row.get(1)?,
+                    session_name: row.get(2)?,
+                    conversation_id: row.get(3)?,
+                    agent_name: row.get(4)?,
+                    role: row.get(5)?,
+                    content: row.get(6)?,
+                    channel_type: row.get(7)?,
+                    model_used: row.get(8)?,
+                    input_tokens: row.get(9)?,
+                    output_tokens: row.get(10)?,
+                    turn_id: row.get(11)?,
+                    is_final: row.get(12)?,
+                    metadata: row.get(13)?,
+                    created_at: row.get(14)?,
                 })
             })
             .map_err(|e| format!("Failed to query history: {}", e))?
@@ -135,7 +195,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT id, conversation_id, agent_name, role, content, channel_type, \
+                "SELECT id, session_id, session_name, conversation_id, agent_name, role, content, channel_type, \
                  model_used, input_tokens, output_tokens, turn_id, is_final, metadata, created_at \
                  FROM conversations \
                  WHERE conversation_id = ?1 AND is_final = 1 \
@@ -151,22 +211,68 @@ impl Database {
                 |row| {
                     Ok(ConversationMessage {
                         id: row.get(0)?,
-                        conversation_id: row.get(1)?,
-                        agent_name: row.get(2)?,
-                        role: row.get(3)?,
-                        content: row.get(4)?,
-                        channel_type: row.get(5)?,
-                        model_used: row.get(6)?,
-                        input_tokens: row.get(7)?,
-                        output_tokens: row.get(8)?,
-                        turn_id: row.get(9)?,
-                        is_final: row.get(10)?,
-                        metadata: row.get(11)?,
-                        created_at: row.get(12)?,
+                        session_id: row.get(1)?,
+                        session_name: row.get(2)?,
+                        conversation_id: row.get(3)?,
+                        agent_name: row.get(4)?,
+                        role: row.get(5)?,
+                        content: row.get(6)?,
+                        channel_type: row.get(7)?,
+                        model_used: row.get(8)?,
+                        input_tokens: row.get(9)?,
+                        output_tokens: row.get(10)?,
+                        turn_id: row.get(11)?,
+                        is_final: row.get(12)?,
+                        metadata: row.get(13)?,
+                        created_at: row.get(14)?,
                     })
                 },
             )
             .map_err(|e| format!("Failed to query turns_in_window: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(messages)
+    }
+
+    /// Load all final user/assistant messages for a durable session across
+    /// every conversation in that session.
+    pub fn load_final_turns_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<ConversationMessage>, String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, session_id, session_name, conversation_id, agent_name, role, content, channel_type, \
+                 model_used, input_tokens, output_tokens, turn_id, is_final, metadata, created_at \
+                 FROM conversations \
+                 WHERE session_id = ?1 AND is_final = 1 \
+                 AND role IN ('user', 'assistant') \
+                 ORDER BY id",
+            )
+            .map_err(|e| format!("Failed to prepare turns_for_session: {}", e))?;
+
+        let messages = stmt
+            .query_map([session_id], |row| {
+                Ok(ConversationMessage {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    session_name: row.get(2)?,
+                    conversation_id: row.get(3)?,
+                    agent_name: row.get(4)?,
+                    role: row.get(5)?,
+                    content: row.get(6)?,
+                    channel_type: row.get(7)?,
+                    model_used: row.get(8)?,
+                    input_tokens: row.get(9)?,
+                    output_tokens: row.get(10)?,
+                    turn_id: row.get(11)?,
+                    is_final: row.get(12)?,
+                    metadata: row.get(13)?,
+                    created_at: row.get(14)?,
+                })
+            })
+            .map_err(|e| format!("Failed to query turns_for_session: {}", e))?
             .filter_map(|r| r.ok())
             .collect();
         Ok(messages)
@@ -190,7 +296,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT id, conversation_id, agent_name, role, content, channel_type, \
+                "SELECT id, session_id, session_name, conversation_id, agent_name, role, content, channel_type, \
                  model_used, input_tokens, output_tokens, turn_id, is_final, metadata, created_at \
                  FROM conversations WHERE turn_id = ?1 ORDER BY id",
             )
@@ -200,18 +306,20 @@ impl Database {
             .query_map([turn_id], |row| {
                 Ok(ConversationMessage {
                     id: row.get(0)?,
-                    conversation_id: row.get(1)?,
-                    agent_name: row.get(2)?,
-                    role: row.get(3)?,
-                    content: row.get(4)?,
-                    channel_type: row.get(5)?,
-                    model_used: row.get(6)?,
-                    input_tokens: row.get(7)?,
-                    output_tokens: row.get(8)?,
-                    turn_id: row.get(9)?,
-                    is_final: row.get(10)?,
-                    metadata: row.get(11)?,
-                    created_at: row.get(12)?,
+                    session_id: row.get(1)?,
+                    session_name: row.get(2)?,
+                    conversation_id: row.get(3)?,
+                    agent_name: row.get(4)?,
+                    role: row.get(5)?,
+                    content: row.get(6)?,
+                    channel_type: row.get(7)?,
+                    model_used: row.get(8)?,
+                    input_tokens: row.get(9)?,
+                    output_tokens: row.get(10)?,
+                    turn_id: row.get(11)?,
+                    is_final: row.get(12)?,
+                    metadata: row.get(13)?,
+                    created_at: row.get(14)?,
                 })
             })
             .map_err(|e| format!("Failed to query turn: {}", e))?
@@ -288,7 +396,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT id, conversation_id, agent_name, role, content, channel_type, \
+                "SELECT id, session_id, session_name, conversation_id, agent_name, role, content, channel_type, \
                  model_used, input_tokens, output_tokens, turn_id, is_final, metadata, created_at \
                  FROM conversations \
                  WHERE agent_name = ?1 AND is_final = 1 \
@@ -300,18 +408,20 @@ impl Database {
             .query_map(rusqlite::params![agent_name, limit], |row| {
                 Ok(ConversationMessage {
                     id: row.get(0)?,
-                    conversation_id: row.get(1)?,
-                    agent_name: row.get(2)?,
-                    role: row.get(3)?,
-                    content: row.get(4)?,
-                    channel_type: row.get(5)?,
-                    model_used: row.get(6)?,
-                    input_tokens: row.get(7)?,
-                    output_tokens: row.get(8)?,
-                    turn_id: row.get(9)?,
-                    is_final: row.get(10)?,
-                    metadata: row.get(11)?,
-                    created_at: row.get(12)?,
+                    session_id: row.get(1)?,
+                    session_name: row.get(2)?,
+                    conversation_id: row.get(3)?,
+                    agent_name: row.get(4)?,
+                    role: row.get(5)?,
+                    content: row.get(6)?,
+                    channel_type: row.get(7)?,
+                    model_used: row.get(8)?,
+                    input_tokens: row.get(9)?,
+                    output_tokens: row.get(10)?,
+                    turn_id: row.get(11)?,
+                    is_final: row.get(12)?,
+                    metadata: row.get(13)?,
+                    created_at: row.get(14)?,
                 })
             })
             .map_err(|e| format!("Failed to query recent messages: {}", e))?
@@ -333,7 +443,7 @@ impl Database {
         let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
             if let Some(agent) = agent_name {
                 (
-                    "SELECT conversation_id, agent_name, channel_type, \
+                    "SELECT session_id, session_name, conversation_id, agent_name, channel_type, \
                  COUNT(DISTINCT turn_id) as turn_count, \
                  COUNT(*) as message_count, \
                  COALESCE(SUM(input_tokens), 0) as total_input_tokens, \
@@ -341,14 +451,14 @@ impl Database {
                  MIN(created_at) as first_message_at, \
                  MAX(created_at) as last_message_at \
                  FROM conversations WHERE agent_name = ?1 \
-                 GROUP BY conversation_id \
+                 GROUP BY session_id, session_name, conversation_id \
                  ORDER BY last_message_at DESC LIMIT ?2"
                         .to_string(),
                     vec![Box::new(agent.to_string()), Box::new(limit)],
                 )
             } else {
                 (
-                    "SELECT conversation_id, agent_name, channel_type, \
+                    "SELECT session_id, session_name, conversation_id, agent_name, channel_type, \
                  COUNT(DISTINCT turn_id) as turn_count, \
                  COUNT(*) as message_count, \
                  COALESCE(SUM(input_tokens), 0) as total_input_tokens, \
@@ -356,7 +466,7 @@ impl Database {
                  MIN(created_at) as first_message_at, \
                  MAX(created_at) as last_message_at \
                  FROM conversations \
-                 GROUP BY conversation_id \
+                 GROUP BY session_id, session_name, conversation_id \
                  ORDER BY last_message_at DESC LIMIT ?1"
                         .to_string(),
                     vec![Box::new(limit)],
@@ -373,15 +483,17 @@ impl Database {
         let rows = stmt
             .query_map(params_ref.as_slice(), |row| {
                 Ok(ConversationSummary {
-                    conversation_id: row.get(0)?,
-                    agent_name: row.get(1)?,
-                    channel_type: row.get(2)?,
-                    turn_count: row.get(3)?,
-                    message_count: row.get(4)?,
-                    total_input_tokens: row.get(5)?,
-                    total_output_tokens: row.get(6)?,
-                    first_message_at: row.get(7)?,
-                    last_message_at: row.get(8)?,
+                    session_id: row.get(0)?,
+                    session_name: row.get(1)?,
+                    conversation_id: row.get(2)?,
+                    agent_name: row.get(3)?,
+                    channel_type: row.get(4)?,
+                    turn_count: row.get(5)?,
+                    message_count: row.get(6)?,
+                    total_input_tokens: row.get(7)?,
+                    total_output_tokens: row.get(8)?,
+                    first_message_at: row.get(9)?,
+                    last_message_at: row.get(10)?,
                 })
             })
             .map_err(|e| format!("Failed to query conversations: {}", e))?;
@@ -487,7 +599,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT id, conversation_id, agent_name, role, content, channel_type, \
+                "SELECT id, session_id, session_name, conversation_id, agent_name, role, content, channel_type, \
                  model_used, input_tokens, output_tokens, turn_id, is_final, metadata, created_at \
                  FROM conversations WHERE conversation_id = ?1 ORDER BY id",
             )
@@ -497,18 +609,20 @@ impl Database {
             .query_map([conversation_id], |row| {
                 Ok(ConversationMessage {
                     id: row.get(0)?,
-                    conversation_id: row.get(1)?,
-                    agent_name: row.get(2)?,
-                    role: row.get(3)?,
-                    content: row.get(4)?,
-                    channel_type: row.get(5)?,
-                    model_used: row.get(6)?,
-                    input_tokens: row.get(7)?,
-                    output_tokens: row.get(8)?,
-                    turn_id: row.get(9)?,
-                    is_final: row.get(10)?,
-                    metadata: row.get(11)?,
-                    created_at: row.get(12)?,
+                    session_id: row.get(1)?,
+                    session_name: row.get(2)?,
+                    conversation_id: row.get(3)?,
+                    agent_name: row.get(4)?,
+                    role: row.get(5)?,
+                    content: row.get(6)?,
+                    channel_type: row.get(7)?,
+                    model_used: row.get(8)?,
+                    input_tokens: row.get(9)?,
+                    output_tokens: row.get(10)?,
+                    turn_id: row.get(11)?,
+                    is_final: row.get(12)?,
+                    metadata: row.get(13)?,
+                    created_at: row.get(14)?,
                 })
             })
             .map_err(|e| format!("Failed to query conversation: {}", e))?
@@ -586,6 +700,65 @@ mod tests {
         assert_eq!(h2.len(), 1);
         assert_eq!(h1[0].content, "msg-a");
         assert_eq!(h2[0].content, "msg-b");
+    }
+
+    #[test]
+    fn test_load_final_turns_for_session_across_conversations() {
+        let db = setup();
+        db.save_message_with_session(
+            "session-1",
+            Some("MIS-00001"),
+            "conv-1",
+            "ino",
+            "user",
+            "first",
+            "task",
+            None,
+            0,
+            0,
+            "t1",
+            true,
+            None,
+        )
+        .unwrap();
+        db.save_message_with_session(
+            "session-1",
+            Some("MIS-00001"),
+            "conv-2",
+            "ino",
+            "assistant",
+            "second",
+            "task",
+            None,
+            0,
+            0,
+            "t2",
+            true,
+            None,
+        )
+        .unwrap();
+        db.save_message_with_session(
+            "session-2",
+            None,
+            "conv-3",
+            "ino",
+            "user",
+            "other",
+            "cli",
+            None,
+            0,
+            0,
+            "t3",
+            true,
+            None,
+        )
+        .unwrap();
+
+        let turns = db.load_final_turns_for_session("session-1").unwrap();
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].conversation_id, "conv-1");
+        assert_eq!(turns[1].conversation_id, "conv-2");
+        assert_eq!(turns[0].session_name.as_deref(), Some("MIS-00001"));
     }
 
     #[test]

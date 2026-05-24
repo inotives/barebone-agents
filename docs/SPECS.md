@@ -373,7 +373,7 @@ message_budget = budget - system_tokens
 
 ### 5.1 Schema
 
-Created inline at startup via `CREATE TABLE IF NOT EXISTS` (no migration tool).
+Created inline at startup via `CREATE TABLE IF NOT EXISTS` plus narrow idempotent startup migrations for additive columns.
 
 ```sql
 -- Agent registry
@@ -385,6 +385,8 @@ CREATE TABLE IF NOT EXISTS agents (
 -- Conversation messages (two-tier storage)
 CREATE TABLE IF NOT EXISTS conversations (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT,                  -- durable generated UUID grouping many conversations
+    session_name    TEXT,                  -- optional human/domain label, e.g. MIS-00001
     conversation_id TEXT NOT NULL,
     agent_name      TEXT NOT NULL,
     role            TEXT NOT NULL,          -- "user" | "assistant" | "tool"
@@ -399,6 +401,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_conv_id ON conversations(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_conv_session ON conversations(session_id);
 CREATE INDEX IF NOT EXISTS idx_conv_agent ON conversations(agent_name);
 CREATE INDEX IF NOT EXISTS idx_conv_turn ON conversations(turn_id);
 CREATE INDEX IF NOT EXISTS idx_conv_final ON conversations(conversation_id, is_final);
@@ -441,6 +444,9 @@ CREATE INDEX IF NOT EXISTS idx_task_schedule ON tasks(schedule);
 
 ### 5.2 Two-Tier Message Storage
 
+- **`session_id`**: Durable generated UUID for a broader work session. One session may contain many `conversation_id` values.
+- **`session_name`**: Optional label for a session. Mission task runs store the mission key here while keeping `session_id` opaque.
+- **`conversation_id`**: Individual chat thread or task execution log within a session.
 - **`is_final=1`**: User messages and final assistant responses — loaded for LLM context
 - **`is_final=0`**: Intermediate messages (assistant with tool calls, tool results) — audit only
 - **`turn_id`**: Groups all messages in one user→response cycle (format: `turn-{uuid[:8]}`)
@@ -449,8 +455,10 @@ CREATE INDEX IF NOT EXISTS idx_task_schedule ON tasks(schedule);
 
 | Function | SQL | Purpose |
 |---|---|---|
-| `save_message(...)` | INSERT INTO conversations | Save any message (user, assistant, tool) |
+| `save_message(...)` | INSERT INTO conversations | Save any message (compat wrapper, session defaults to conversation id) |
+| `save_message_with_session(...)` | INSERT INTO conversations | Save any message with explicit session grouping |
 | `load_history(conv_id, limit=20)` | SELECT WHERE is_final=1 ORDER BY id DESC LIMIT N (reversed) | Load clean history for LLM |
+| `load_final_turns_for_session(session_id)` | SELECT WHERE session_id=? AND is_final=1 | Load session-level turns across conversations |
 | `load_full_turn(turn_id)` | SELECT WHERE turn_id=? | Debug/audit full turn |
 | `get_token_usage(agent, since?)` | SUM(input_tokens), SUM(output_tokens) | Token aggregation |
 | `get_parent_id(conv_id)` | First message metadata→parent_id | Conversation chaining |
@@ -550,11 +558,17 @@ async fn run(
 
 ### 6.3 Local Session Lifecycle
 
-`SessionManager` tracks active local conversation sessions keyed by
-`conversation_id`. SQLite is the canonical turn store. On shutdown, non-task
-sessions are summarized into markdown under `data/drafts/sessions/`; task
-channels use task results and optional research drafts instead of session
-summary drafts.
+`SessionManager` tracks active local channel state keyed by `conversation_id`.
+SQLite is the canonical durable turn store and persists a generated `session_id`
+plus optional `session_name` on every conversation row. CLI `/continue` starts a
+new conversation under the same session; CLI `/new` starts a fresh session.
+Mission task runs write independent task conversations under the mission's
+session, storing the mission key as `session_name`.
+
+On shutdown, non-task conversation segments are summarized into markdown under
+`data/drafts/sessions/`. Mission task completions also refresh a durable
+session-level summary under `data/drafts/sessions/by-session/`, aggregating all
+final user/assistant turns across conversations in that session.
 
 ### 6.4 Context Injection
 
@@ -1005,7 +1019,8 @@ The full design is in `docs/EP-00015_20260503_memory-aware-task-and-reflection-l
 | Active preferences | `agents/_preferences/<slug>.md` |
 | Pending preferences | `data/drafts/knowledges/preferences/<slug>.md` |
 | Research drafts | `data/drafts/researches/<task_key>-<YYYYMMDDHHMM>-<slug>.md` |
-| Session summaries | `data/drafts/sessions/<segment_compact_iso>.md` |
+| Conversation segment summaries | `data/drafts/sessions/<segment_compact_iso>.md` |
+| Session-level summaries | `data/drafts/sessions/by-session/<session_id>.md` |
 | Ad-hoc note drafts | `data/drafts/notes/<slug>.md` |
 
 ### 18.2 System prompt block order (Decision J2)

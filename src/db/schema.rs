@@ -48,6 +48,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch(SCHEMA_SQL)
             .map_err(|e| format!("Failed to initialize schema: {}", e))?;
+        migrate_conversation_sessions(&conn)?;
         Ok(())
     }
 
@@ -258,6 +259,8 @@ CREATE TABLE IF NOT EXISTS agents (
 
 CREATE TABLE IF NOT EXISTS conversations (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT,
+    session_name    TEXT,
     conversation_id TEXT NOT NULL,
     agent_name      TEXT NOT NULL,
     role            TEXT NOT NULL,
@@ -319,6 +322,59 @@ CREATE TABLE IF NOT EXISTS reflection_counters (
 );
 "#;
 
+fn migrate_conversation_sessions(conn: &Connection) -> Result<(), String> {
+    let columns = conversation_columns(conn)?;
+    if !columns.iter().any(|c| c == "session_id") {
+        conn.execute("ALTER TABLE conversations ADD COLUMN session_id TEXT", [])
+            .map_err(|e| format!("Failed to add conversations.session_id: {}", e))?;
+    }
+    if !columns.iter().any(|c| c == "session_name") {
+        conn.execute("ALTER TABLE conversations ADD COLUMN session_name TEXT", [])
+            .map_err(|e| format!("Failed to add conversations.session_name: {}", e))?;
+    }
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT conversation_id FROM conversations \
+             WHERE session_id IS NULL OR session_id = ''",
+        )
+        .map_err(|e| format!("Failed to prepare session backfill: {}", e))?;
+    let conversation_ids: Vec<String> = stmt
+        .query_map([], |row| row.get(0))
+        .map_err(|e| format!("Failed to query session backfill: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    for conversation_id in conversation_ids {
+        let session_id = uuid::Uuid::new_v4().to_string();
+        conn.execute(
+            "UPDATE conversations SET session_id = ?1 \
+             WHERE conversation_id = ?2 AND (session_id IS NULL OR session_id = '')",
+            rusqlite::params![session_id, conversation_id],
+        )
+        .map_err(|e| format!("Failed to backfill conversation session_id: {}", e))?;
+    }
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_conv_session ON conversations(session_id)",
+        [],
+    )
+    .map_err(|e| format!("Failed to create conversation session index: {}", e))?;
+    Ok(())
+}
+
+fn conversation_columns(conn: &Connection) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(conversations)")
+        .map_err(|e| format!("Failed to inspect conversations schema: {}", e))?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| format!("Failed to query conversations schema: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(columns)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,5 +426,51 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         // Running init_schema again should not fail
         db.init_schema().unwrap();
+    }
+
+    #[test]
+    fn test_open_migrates_existing_conversations_without_session_columns() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("old.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                r#"
+                CREATE TABLE conversations (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT NOT NULL,
+                    agent_name      TEXT NOT NULL,
+                    role            TEXT NOT NULL,
+                    content         TEXT NOT NULL,
+                    channel_type    TEXT NOT NULL,
+                    model_used      TEXT,
+                    input_tokens    INTEGER DEFAULT 0,
+                    output_tokens   INTEGER DEFAULT 0,
+                    turn_id         TEXT NOT NULL,
+                    is_final        BOOLEAN DEFAULT 0,
+                    metadata        TEXT,
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO conversations (
+                    conversation_id, agent_name, role, content, channel_type,
+                    turn_id, is_final
+                ) VALUES ('conv-1', 'ino', 'user', 'hello', 'cli', 'turn-1', 1);
+                "#,
+            )
+            .unwrap();
+        }
+
+        let db = Database::open(&path).unwrap();
+        let session_id: String = db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT session_id FROM conversations WHERE conversation_id = 'conv-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!session_id.is_empty());
     }
 }

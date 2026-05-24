@@ -176,6 +176,8 @@ impl AgentLoop {
         &self,
         message: &str,
         conversation_id: &str,
+        session_id: &str,
+        session_name: Option<&str>,
         channel_type: &str,
         parent_id: Option<&str>,
         recommended_context: &[String],
@@ -200,7 +202,9 @@ impl AgentLoop {
 
         // Save user message
         let metadata = parent_id.map(|pid| format!(r#"{{"parent_id":"{}"}}"#, pid));
-        if let Err(e) = self.db.save_message(
+        if let Err(e) = self.db.save_message_with_session(
+            session_id,
+            session_name,
             conversation_id,
             &self.agent_name,
             "user",
@@ -275,6 +279,8 @@ impl AgentLoop {
                 let error_msg = format!("I'm sorry, all models failed: {}", e);
                 self.save_final_response(
                     conversation_id,
+                    session_id,
+                    session_name,
                     &turn_id,
                     channel_type,
                     &error_msg,
@@ -313,7 +319,9 @@ impl AgentLoop {
             )
             .ok();
 
-            let _ = self.db.save_message(
+            let _ = self.db.save_message_with_session(
+                session_id,
+                session_name,
                 conversation_id,
                 &self.agent_name,
                 "assistant",
@@ -364,7 +372,9 @@ impl AgentLoop {
                 })
                 .to_string();
 
-                let _ = self.db.save_message(
+                let _ = self.db.save_message_with_session(
+                    session_id,
+                    session_name,
                     conversation_id,
                     &self.agent_name,
                     "tool",
@@ -397,6 +407,8 @@ impl AgentLoop {
                     let error_msg = format!("LLM call failed during tool loop: {}", e);
                     self.save_final_response(
                         conversation_id,
+                        session_id,
+                        session_name,
                         &turn_id,
                         channel_type,
                         &error_msg,
@@ -414,6 +426,8 @@ impl AgentLoop {
         // Save final response
         self.save_final_response(
             conversation_id,
+            session_id,
+            session_name,
             &turn_id,
             channel_type,
             &response.content,
@@ -437,6 +451,8 @@ impl AgentLoop {
     fn save_final_response(
         &self,
         conversation_id: &str,
+        session_id: &str,
+        session_name: Option<&str>,
         turn_id: &str,
         channel_type: &str,
         content: &str,
@@ -444,7 +460,9 @@ impl AgentLoop {
         output_tokens: i64,
         model: &str,
     ) {
-        if let Err(e) = self.db.save_message(
+        if let Err(e) = self.db.save_message_with_session(
+            session_id,
+            session_name,
             conversation_id,
             &self.agent_name,
             "assistant",

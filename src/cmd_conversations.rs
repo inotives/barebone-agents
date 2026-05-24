@@ -20,6 +20,8 @@ fn run_list(db: &Database, agent: Option<&str>, limit: u32, as_json: bool) -> Re
             .iter()
             .map(|c| {
                 json!({
+                    "session_id": c.session_id,
+                    "session_name": c.session_name,
                     "conversation_id": c.conversation_id,
                     "agent": c.agent_name,
                     "channel": c.channel_type,
@@ -37,15 +39,24 @@ fn run_list(db: &Database, agent: Option<&str>, limit: u32, as_json: bool) -> Re
         println!("(no conversations)");
     } else {
         println!(
-            "{:<40} {:<8} {:<8} {:<6} {:<12} {}",
-            "CONVERSATION_ID", "AGENT", "CHANNEL", "TURNS", "TOKENS", "LAST ACTIVITY"
+            "{:<18} {:<22} {:<32} {:<8} {:<8} {:<6} {:<12} {}",
+            "SESSION",
+            "SESSION_NAME",
+            "CONVERSATION_ID",
+            "AGENT",
+            "CHANNEL",
+            "TURNS",
+            "TOKENS",
+            "LAST ACTIVITY"
         );
-        println!("{}", "-".repeat(90));
+        println!("{}", "-".repeat(125));
         for c in &convs {
             let tokens = c.total_input_tokens + c.total_output_tokens;
             println!(
-                "{:<40} {:<8} {:<8} {:<6} {:<12} {}",
-                truncate(&c.conversation_id, 38),
+                "{:<18} {:<22} {:<32} {:<8} {:<8} {:<6} {:<12} {}",
+                truncate(&c.session_id, 16),
+                truncate(c.session_name.as_deref().unwrap_or("-"), 20),
+                truncate(&c.conversation_id, 30),
                 c.agent_name,
                 c.channel_type,
                 c.turn_count,
@@ -73,6 +84,9 @@ fn run_show(db: &Database, id: &str, full: bool, as_json: bool) -> Result<(), St
             .iter()
             .map(|m| {
                 let mut obj = json!({
+                    "session_id": m.session_id,
+                    "session_name": m.session_name,
+                    "conversation_id": m.conversation_id,
                     "role": m.role,
                     "content": m.content,
                     "turn_id": m.turn_id,
@@ -93,9 +107,11 @@ fn run_show(db: &Database, id: &str, full: bool, as_json: bool) -> Result<(), St
     } else {
         let agent = &messages[0].agent_name;
         let channel = &messages[0].channel_type;
+        let session_id = &messages[0].session_id;
+        let session_name = messages[0].session_name.as_deref().unwrap_or("-");
         println!(
-            "Conversation: {}  (agent={}, channel={})",
-            id, agent, channel
+            "Conversation: {}  (session={}, session_name={}, agent={}, channel={})",
+            id, session_id, session_name, agent, channel
         );
         println!("{}", "-".repeat(70));
 

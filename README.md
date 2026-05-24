@@ -21,7 +21,7 @@ The harness is the hands and body. LLMs are the brain. Rich functionality (knowl
 - Task and mission management with scheduling
 - Skill system with keyword-matched context injection
 - Local user-preference pool with scope-based selection
-- Local-first artifact storage (research drafts, session summaries, preferences)
+- Local-first artifact storage (research drafts, conversation/session summaries, preferences)
 - Counter-triggered pattern reflection — agent notices recurring patterns across runs and proposes preferences
 - CLI and Discord channels
 - SQLite-backed conversation history and task persistence
@@ -228,11 +228,11 @@ barebone-agents/
 │       ├── agent.yml             # Model + channel + MCP config
 │       └── .env                  # Agent-specific credentials
 ├── data/                         # Runtime data (gitignored)
-│   ├── barebone-agent.db         # SQLite (conversations, tasks, counters)
+│   ├── barebone-agent.db         # SQLite (sessions, conversations, tasks, counters)
 │   └── drafts/                   # Local artifact storage
 │       ├── researches/         #   research drafts (task output, opt-in)
 │       ├── knowledges/preferences/  # pending preferences (review-gated)
-│       ├── sessions/             #   conversation summaries
+│       ├── sessions/             #   conversation and session summaries
 │       └── notes/                #   ad-hoc notes
 ├── docs/
 │   ├── SPECS.md                  # Permanent spec
