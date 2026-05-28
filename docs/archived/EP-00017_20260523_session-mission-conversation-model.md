@@ -29,7 +29,7 @@
 - [x] Step 6 — Update README, `docs/SPECS.md`, and `AGENTS.md` project structure/domain wording.
 - [x] Step 7 — Verify with schema tests, task execution tests, conversation command tests, `cargo test`, and one-shot smoke test.
 
-## Status: IN REVIEW
+## Status: DONE
 
 ## Implementation Notes
 
